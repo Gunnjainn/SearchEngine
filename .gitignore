@@ -1,0 +1,44 @@
+# ── C++ ──────────────────────────────────────────────
+build/
+cmake-build-*/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# ── Python ──────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+venv/
+.venv/
+*.egg
+
+# ── Node / React ────────────────────────────────────
+node_modules/
+dist/
+.vite/
+
+# ── Environment / Secrets ───────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── IDE / OS ────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

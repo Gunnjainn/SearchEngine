@@ -1,0 +1,61 @@
+version: "3.9"
+
+services:
+  engine:
+    build:
+      context: ../engine
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    networks:
+      - searchnet
+    depends_on:
+      - db
+
+  api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ENGINE_URL=http://engine:8080
+      - DATABASE_URL=postgresql://search:search@db:5432/searchdb
+    networks:
+      - searchnet
+    depends_on:
+      - engine
+      - db
+
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    networks:
+      - searchnet
+    depends_on:
+      - api
+
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: search
+      POSTGRES_PASSWORD: search
+      POSTGRES_DB: searchdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - searchnet
+
+networks:
+  searchnet:
+    driver: bridge
+
+volumes:
+  pgdata:
