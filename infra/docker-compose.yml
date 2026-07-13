@@ -11,6 +11,8 @@ services:
       - searchnet
     depends_on:
       - db
+    profiles:
+      - full
 
   api:
     build:
@@ -23,9 +25,6 @@ services:
       - DATABASE_URL=postgresql://search:search@db:5432/searchdb
     networks:
       - searchnet
-    depends_on:
-      - engine
-      - db
 
   web:
     build:
@@ -52,6 +51,8 @@ services:
       - pgdata:/var/lib/postgresql/data
     networks:
       - searchnet
+    profiles:
+      - full
 
 networks:
   searchnet:
