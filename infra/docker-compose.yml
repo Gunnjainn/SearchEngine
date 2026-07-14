@@ -11,6 +11,8 @@ services:
       - searchnet
     depends_on:
       - db
+    profiles:
+      - full
 
   api:
     build:
@@ -24,9 +26,6 @@ services:
       - ENGINE_URL=http://engine:8080
     networks:
       - searchnet
-    depends_on:
-      - engine
-      - db
 
   web:
     build:
@@ -52,6 +51,10 @@ services:
       - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     networks:
       - searchnet
+
+    profiles:
+      - full
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U search -d searchdb"]
       interval: 5s
