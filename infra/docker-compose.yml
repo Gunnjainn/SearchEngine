@@ -1,4 +1,3 @@
-version: "3.9"
 
 services:
   engine:
@@ -7,12 +6,12 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
+    volumes:
+      - ../ingest/data:/data:ro
+    environment:
+      - JSONL_PATH=/data/hn.jsonl
     networks:
       - searchnet
-    depends_on:
-      - db
-    profiles:
-      - full
 
   api:
     build:
@@ -26,6 +25,8 @@ services:
       - ENGINE_URL=http://engine:8080
     networks:
       - searchnet
+    depends_on:
+      - engine
 
   web:
     build:

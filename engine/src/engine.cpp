@@ -1,152 +1,141 @@
 #include "engine.h"
-#include <nlohmann/json.hpp>
-
-#include <algorithm>
-#include <cctype>
 #include <fstream>
 #include <sstream>
-#include <stdexcept>
-#include <set>
+#include <iostream>
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <nlohmann/json.hpp>
 
-namespace search {
+using json = nlohmann::json;
 
-// ── Tokenizer ────────────────────────────────────────────────────────────────
-
-std::vector<std::string> Engine::tokenize(const std::string& text) {
+std::vector<std::string> Engine::tokenize(const std::string& text) const {
     std::vector<std::string> tokens;
-    std::istringstream stream(text);
-    std::string word;
-    while (stream >> word) {
-        // Lowercase in-place.
-        std::transform(word.begin(), word.end(), word.begin(),
-                       [](unsigned char c) { return std::tolower(c); });
-        tokens.push_back(std::move(word));
+    std::string current_token;
+
+    for (char c : text) {
+        if (std::isalnum(c)) {
+            current_token += std::tolower(c);
+        } else if (!current_token.empty()) {
+            tokens.push_back(current_token);
+            current_token.clear();
+        }
+    }
+    if (!current_token.empty()) {
+        tokens.push_back(current_token);
     }
     return tokens;
 }
 
-// ── Postings intersection ────────────────────────────────────────────────────
-
-std::vector<int> Engine::intersect(const std::vector<int>& a,
-                                   const std::vector<int>& b) {
-    std::vector<int> out;
-    auto ia = a.begin(), ib = b.begin();
-    while (ia != a.end() && ib != b.end()) {
-        if (*ia == *ib) {
-            out.push_back(*ia);
-            ++ia;
-            ++ib;
-        } else if (*ia < *ib) {
-            ++ia;
-        } else {
-            ++ib;
-        }
-    }
-    return out;
-}
-
-// ── Index building ───────────────────────────────────────────────────────────
-
 void Engine::build_from_jsonl(const std::string& path) {
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        throw std::runtime_error("Cannot open JSONL file: " + path);
+    std::ifstream infile(path);
+    if (!infile.is_open()) {
+        std::cerr << "Failed to open JSONL: " << path << std::endl;
+        return;
     }
-
-    index_.clear();
-    docs_.clear();
 
     std::string line;
-    while (std::getline(file, line)) {
+    long long total_length = 0;
+
+    std::cout << "Building index from " << path << "..." << std::endl;
+
+    while (std::getline(infile, line)) {
         if (line.empty()) continue;
 
-        nlohmann::json doc = nlohmann::json::parse(line);
+        try {
+            auto j = json::parse(line);
+            Document doc;
+            doc.id = j["doc_id"].get<int>();
+            doc.title = j.value("title", "");
+            doc.url = j.value("url", "");
+            doc.text = j.value("text", "");
 
-        int doc_id      = doc.at("doc_id").get<int>();
-        std::string title = doc.at("title").get<std::string>();
-        std::string url   = doc.at("url").get<std::string>();
-        std::string text  = doc.at("text").get<std::string>();
+            std::string content = doc.title + " " + doc.text;
+            std::vector<std::string> tokens = tokenize(content);
+            doc.length = tokens.size();
+            total_length += doc.length;
 
-        // Store document metadata.
-        docs_[doc_id] = DocMeta{title, url};
+            int doc_idx = docs.size();
+            docs.push_back(doc);
 
-        // Tokenize title + text together.
-        std::string full_text = title + " " + text;
-        auto tokens = tokenize(full_text);
+            std::unordered_map<std::string, int> term_freqs;
+            for (const auto& token : tokens) {
+                term_freqs[token]++;
+            }
 
-        // Deduplicate terms for this document (we want each doc_id to appear
-        // at most once per term's postings list).
-        std::set<std::string> unique_terms(tokens.begin(), tokens.end());
+            for (const auto& [term, tf] : term_freqs) {
+                inverted_index[term].push_back({doc_idx, tf});
+                df[term]++;
+            }
 
-        for (const auto& term : unique_terms) {
-            index_[term].push_back(doc_id);
+            if (docs.size() % 100 == 0) {
+                std::cout << "\rIndexed " << docs.size() << " documents..." << std::flush;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error parsing line: " << e.what() << "\nLine: " << line << std::endl;
         }
     }
+    std::cout << "\rIndexed " << docs.size() << " documents. Done.\n";
 
-    // Postings are already sorted per-term because we process doc_ids in file
-    // order and insert only once per doc.  If the JSONL is not sorted by
-    // doc_id we need to sort each list.
-    for (auto& [term, postings] : index_) {
-        std::sort(postings.begin(), postings.end());
+    if (!docs.empty()) {
+        avgdl = static_cast<double>(total_length) / docs.size();
     }
 }
 
-// ── Search ───────────────────────────────────────────────────────────────────
+void Engine::save(const std::string& path) {
+    std::cout << "Saving index to " << path << " is not implemented yet.\n";
+}
+
+void Engine::load(const std::string& path) {
+    std::cout << "Loading index from " << path << " is not implemented yet.\n";
+}
 
 std::vector<Result> Engine::search(const std::string& query, int k) const {
-    auto terms = tokenize(query);
+    if (docs.empty()) return {};
 
-    if (terms.empty() || k <= 0) {
-        return {};
-    }
+    std::vector<std::string> q_tokens = tokenize(query);
+    if (q_tokens.empty()) return {};
 
-    // Start with the postings of the first term.
-    auto it = index_.find(terms[0]);
-    if (it == index_.end()) {
-        return {};
-    }
-    std::vector<int> candidates = it->second;
+    std::unordered_map<int, double> scores;
+    double N = static_cast<double>(docs.size());
 
-    // AND with every subsequent term's postings.
-    for (size_t i = 1; i < terms.size(); ++i) {
-        it = index_.find(terms[i]);
-        if (it == index_.end()) {
-            return {};  // term not in index → AND is empty
+    for (const auto& q_term : q_tokens) {
+        auto it = inverted_index.find(q_term);
+        if (it == inverted_index.end()) continue;
+
+        double doc_freq = static_cast<double>(df.at(q_term));
+        double idf = std::log( (N - doc_freq + 0.5) / (doc_freq + 0.5) + 1.0 );
+
+        for (const auto& posting : it->second) {
+            int doc_idx = posting.doc_idx;
+            double tf = static_cast<double>(posting.tf);
+            double doc_len = static_cast<double>(docs[doc_idx].length);
+
+            double score_term = idf * (tf * (k1 + 1.0)) / (tf + k1 * (1.0 - b + b * (doc_len / avgdl)));
+            scores[doc_idx] += score_term;
         }
-        candidates = intersect(candidates, it->second);
-        if (candidates.empty()) {
-            return {};
-        }
     }
 
-    // Build results (score=0.0, snippet=title for now).
     std::vector<Result> results;
-    int limit = std::min(static_cast<int>(candidates.size()), k);
-    for (int i = 0; i < limit; ++i) {
-        int did = candidates[i];
-        auto doc_it = docs_.find(did);
-        std::string snippet = (doc_it != docs_.end()) ? doc_it->second.title : "";
-        results.push_back(Result{did, 0.0, snippet});
+    for (const auto& [doc_idx, score] : scores) {
+        Result r;
+        r.doc_id = docs[doc_idx].id;
+        r.score = score;
+
+        const auto& text = docs[doc_idx].text;
+        r.snippet = text.substr(0, 150);
+        if (text.length() > 150) r.snippet += "...";
+
+        results.push_back(r);
     }
+
+    std::sort(results.begin(), results.end(), [](const Result& a, const Result& b) {
+        return a.score > b.score;
+    });
+
+    if (k > 0 && static_cast<size_t>(k) < results.size()) {
+        results.resize(k);
+    }
+
     return results;
 }
-
-// ── Persistence stubs ────────────────────────────────────────────────────────
-
-void Engine::save(const std::string& /*index_dir*/) const {
-    // TODO: implement persistence
-}
-
-void Engine::load(const std::string& /*index_dir*/) {
-    // TODO: implement persistence
-}
-
-// ── Accessor ─────────────────────────────────────────────────────────────────
-
-std::vector<int> Engine::postings(const std::string& term) const {
-    auto it = index_.find(term);
-    if (it == index_.end()) return {};
-    return it->second;
-}
-
-}  // namespace search
