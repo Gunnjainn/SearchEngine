@@ -1,16 +1,17 @@
 """FastAPI gateway – search engine API layer.
 
-Currently returns hardcoded stub results that honour Contract 2.
-Once the C++ engine is live, /search will proxy to ENGINE_URL.
+Proxies POST /search to the C++ engine service (ENGINE_URL) over HTTP.
+Adds timeout handling and returns 502 on engine errors.
 """
 
 from __future__ import annotations
 
 import os
-import time
+from contextlib import asynccontextmanager
 from typing import List
 
-from fastapi import FastAPI
+import httpx
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -19,6 +20,7 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 ENGINE_URL: str = os.getenv("ENGINE_URL", "http://engine:8080")
+ENGINE_TIMEOUT: float = float(os.getenv("ENGINE_TIMEOUT", "5.0"))
 
 # ---------------------------------------------------------------------------
 # Pydantic models (Contract 2)
@@ -42,32 +44,28 @@ class SearchResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Hardcoded stub data
+# HTTP client (connection-pooled, reusable)
 # ---------------------------------------------------------------------------
 
-STUB_RESULTS: List[SearchResult] = [
-    SearchResult(
-        doc_id=1,
-        score=4.21,
-        snippet="The quick brown fox jumps over the lazy dog.",
-    ),
-    SearchResult(
-        doc_id=42,
-        score=3.05,
-        snippet="Information retrieval is the science of searching.",
-    ),
-    SearchResult(
-        doc_id=7,
-        score=1.88,
-        snippet="BM25 is a bag-of-words retrieval function.",
-    ),
-]
+http_client = httpx.AsyncClient(timeout=ENGINE_TIMEOUT)
+
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifecycle — clean up httpx client on shutdown."""
+    yield
+    await http_client.aclose()
+
 
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Search Engine Gateway", version="0.1.0")
+app = FastAPI(title="Search Engine Gateway", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -77,7 +75,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.get("/health")
 async def health() -> dict:
     """Liveness / readiness probe."""
@@ -86,16 +83,38 @@ async def health() -> dict:
 
 @app.post("/search", response_model=SearchResponse)
 async def search(req: SearchRequest) -> SearchResponse:
-    """Return search results.
+    """Proxy search request to the C++ engine service.
 
-    Currently returns hardcoded stub data.
-    Will proxy to the C++ engine (ENGINE_URL) once it's running.
+    Forwards {"query": ..., "k": ...} to ENGINE_URL/search and returns the
+    engine's Contract-2 response. Returns HTTP 502 on timeout or connection
+    errors.
     """
-    start = time.perf_counter()
+    try:
+        engine_resp = await http_client.post(
+            f"{ENGINE_URL}/search",
+            json={"query": req.query, "k": req.k},
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=502,
+            detail="Engine request timed out",
+        )
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=502,
+            detail="Could not connect to engine service",
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Engine request failed: {exc}",
+        )
 
-    # Stub: return up to k results from the hardcoded list
-    results = STUB_RESULTS[: req.k]
+    if engine_resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Engine returned status {engine_resp.status_code}",
+        )
 
-    elapsed_ms = int((time.perf_counter() - start) * 1000)
-
-    return SearchResponse(results=results, latency_ms=elapsed_ms)
+    data = engine_resp.json()
+    return SearchResponse(**data)
