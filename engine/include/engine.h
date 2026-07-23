@@ -1,5 +1,4 @@
 #pragma once
-
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -39,9 +38,9 @@ private:
     std::vector<Document> docs;
     std::unordered_map<std::string, std::vector<Posting>> inverted_index;
     std::unordered_map<std::string, int> df;
-    
+
     double avgdl = 0.0;
-    
+
     // BM25 parameters
     const double k1 = 1.5;
     const double b = 0.75;

@@ -30,9 +30,9 @@ set(CROW_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(crow json)
 
 # ---------------------------------------------------------------------------
-# Engine library (header-only for now, will become a static lib later)
+# Engine library
 # ---------------------------------------------------------------------------
-add_library(engine_lib src/engine.cpp)
+add_library(engine_lib STATIC src/engine.cpp)
 target_include_directories(engine_lib PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(engine_lib PUBLIC nlohmann_json::nlohmann_json)
 
@@ -47,6 +47,5 @@ target_link_libraries(search_engine PRIVATE engine_lib Crow::Crow nlohmann_json:
 # ---------------------------------------------------------------------------
 add_executable(engine_tests tests/test_engine.cpp)
 target_link_libraries(engine_tests PRIVATE engine_lib)
-
 enable_testing()
 add_test(NAME engine_unit_tests COMMAND engine_tests)

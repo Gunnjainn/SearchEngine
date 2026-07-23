@@ -23,7 +23,7 @@ int main() {
 
     const char* jsonl_path = std::getenv("JSONL_PATH");
     const char* index_path = std::getenv("INDEX_PATH");
-    
+
     if (jsonl_path) {
         std::cout << "[engine] Building index from " << jsonl_path << "\n";
         engine.build_from_jsonl(jsonl_path);
@@ -54,7 +54,6 @@ int main() {
     // POST /search — Contract 2
     CROW_ROUTE(app, "/search").methods(crow::HTTPMethod::POST)(
         [&engine](const crow::request& req) {
-            // ── Parse request body ────────────────────────────────────
             json body;
             try {
                 body = json::parse(req.body);
@@ -85,7 +84,6 @@ int main() {
                 return r;
             }
 
-            // ── Execute search ────────────────────────────────────────
             auto t0 = std::chrono::steady_clock::now();
             auto results = engine.search(query, k);
             auto t1 = std::chrono::steady_clock::now();
@@ -94,7 +92,6 @@ int main() {
                 std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
             );
 
-            // ── Build response ────────────────────────────────────────
             json resp;
             resp["results"] = json::array();
             for (const auto& r : results) {
