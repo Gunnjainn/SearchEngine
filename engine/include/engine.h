@@ -28,7 +28,9 @@ public:
     std::vector<Result> search(const std::string& query, int k) const;
 
 private:
-    std::vector<std::string> tokenize(const std::string& text) const;
+    // NOTE: text analysis lives in search::tokenize (tokenizer.h). Both
+    // build_from_jsonl and search go through it, so index terms and query
+    // terms are always produced by the same pipeline.
 
     struct Posting {
         int doc_idx;
