@@ -7,25 +7,9 @@
 #include <cmath>
 #include <nlohmann/json.hpp>
 
+#include "tokenizer.h"
+
 using json = nlohmann::json;
-
-std::vector<std::string> Engine::tokenize(const std::string& text) const {
-    std::vector<std::string> tokens;
-    std::string current_token;
-
-    for (char c : text) {
-        if (std::isalnum(c)) {
-            current_token += std::tolower(c);
-        } else if (!current_token.empty()) {
-            tokens.push_back(current_token);
-            current_token.clear();
-        }
-    }
-    if (!current_token.empty()) {
-        tokens.push_back(current_token);
-    }
-    return tokens;
-}
 
 void Engine::build_from_jsonl(const std::string& path) {
     std::ifstream infile(path);
@@ -51,7 +35,7 @@ void Engine::build_from_jsonl(const std::string& path) {
             doc.text = j.value("text", "");
 
             std::string content = doc.title + " " + doc.text;
-            std::vector<std::string> tokens = tokenize(content);
+            std::vector<std::string> tokens = search::tokenize(content);
             doc.length = tokens.size();
             total_length += doc.length;
 
@@ -93,8 +77,13 @@ void Engine::load(const std::string& path) {
 std::vector<Result> Engine::search(const std::string& query, int k) const {
     if (docs.empty()) return {};
 
-    std::vector<std::string> q_tokens = tokenize(query);
+    // Same tokenizer as the index build — see search::tokenize in tokenizer.h.
+    std::vector<std::string> q_tokens = search::tokenize(query);
     if (q_tokens.empty()) return {};
+
+    // Every document tokenized to nothing (e.g. a corpus of pure stopwords):
+    // avgdl would be 0 and the BM25 length norm would divide by zero.
+    if (avgdl <= 0.0) return {};
 
     std::unordered_map<int, double> scores;
     double N = static_cast<double>(docs.size());

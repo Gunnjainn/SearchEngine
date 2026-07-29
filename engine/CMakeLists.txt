@@ -4,6 +4,12 @@ project(search_engine LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# The tokenizer's fold tables and its tests contain UTF-8 string literals.
+# MSVC otherwise reinterprets them in the active code page.
+if (MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # ---------------------------------------------------------------------------
 # Dependencies via FetchContent
 # ---------------------------------------------------------------------------
@@ -32,7 +38,11 @@ FetchContent_MakeAvailable(crow json)
 # ---------------------------------------------------------------------------
 # Engine library
 # ---------------------------------------------------------------------------
-add_library(engine_lib STATIC src/engine.cpp)
+add_library(engine_lib STATIC
+    src/engine.cpp
+    src/tokenizer.cpp
+    src/porter.cpp
+)
 target_include_directories(engine_lib PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(engine_lib PUBLIC nlohmann_json::nlohmann_json)
 
@@ -47,5 +57,10 @@ target_link_libraries(search_engine PRIVATE engine_lib Crow::Crow nlohmann_json:
 # ---------------------------------------------------------------------------
 add_executable(engine_tests tests/test_engine.cpp)
 target_link_libraries(engine_tests PRIVATE engine_lib)
+
+add_executable(tokenizer_tests tests/test_tokenizer.cpp)
+target_link_libraries(tokenizer_tests PRIVATE engine_lib)
+
 enable_testing()
-add_test(NAME engine_unit_tests COMMAND engine_tests)
+add_test(NAME engine_unit_tests    COMMAND engine_tests)
+add_test(NAME tokenizer_unit_tests COMMAND tokenizer_tests)

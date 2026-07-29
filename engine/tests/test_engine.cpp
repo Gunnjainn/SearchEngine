@@ -80,6 +80,31 @@ void test_bm25_ranking(Engine& engine) {
     ASSERT_EQ(results[0].doc_id, 1);
 }
 
+// The index build and the query path must run text through the SAME
+// tokenizer (search::tokenize), so an inflected query matches an inflected
+// document. Doc 4 contains "Running the compilers"; all of these stem to the
+// terms actually stored in the index.
+void test_shared_tokenizer_matches_inflections(Engine& engine) {
+    for (const char* query : {"compile", "compiled", "COMPILERS", "compiling"}) {
+        auto results = engine.search(query, 10);
+        ASSERT(results.size() == 1);
+        ASSERT_EQ(results[0].doc_id, 4);
+    }
+
+    auto runs = engine.search("run", 10);
+    ASSERT(runs.size() == 1);
+    ASSERT_EQ(runs[0].doc_id, 4);
+
+    // "foxes" stems to "fox", so it finds the same docs the bare term does.
+    ASSERT_EQ(engine.search("foxes", 10).size(), engine.search("fox", 10).size());
+}
+
+// A query made entirely of stopwords has no terms left to score.
+void test_stopword_only_query_returns_nothing(Engine& engine) {
+    ASSERT(engine.search("the and of", 10).empty());
+    ASSERT(engine.search("", 10).empty());
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -92,6 +117,7 @@ int main() {
     out << "{\"doc_id\": 1, \"title\": \"Fox story\", \"url\": \"x.com\", \"text\": \"The quick brown fox jumps over the lazy dog.\"}\n";
     out << "{\"doc_id\": 2, \"title\": \"Animals\", \"url\": \"y.com\", \"text\": \"A fox is an animal. Dogs are also animals.\"}\n";
     out << "{\"doc_id\": 3, \"title\": \"No match\", \"url\": \"z.com\", \"text\": \"This has nothing to do with the query.\"}\n";
+    out << "{\"doc_id\": 4, \"title\": \"Compiler notes\", \"url\": \"w.com\", \"text\": \"Running the compilers requires patience.\"}\n";
     out.close();
     
     Engine engine;
@@ -102,6 +128,8 @@ int main() {
     run_test("search_respects_k_limit", test_search_respects_k_limit, engine);
     run_test("result_has_valid_fields", test_result_has_valid_fields, engine);
     run_test("bm25_ranking", test_bm25_ranking, engine);
+    run_test("shared_tokenizer_matches_inflections", test_shared_tokenizer_matches_inflections, engine);
+    run_test("stopword_only_query_returns_nothing", test_stopword_only_query_returns_nothing, engine);
 
     std::cout << "\n" << g_tests_passed << "/" << g_tests_run << " tests passed.\n\n";
     return (g_tests_passed == g_tests_run) ? EXIT_SUCCESS : EXIT_FAILURE;
