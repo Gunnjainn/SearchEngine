@@ -61,6 +61,10 @@ target_link_libraries(engine_tests PRIVATE engine_lib)
 add_executable(tokenizer_tests tests/test_tokenizer.cpp)
 target_link_libraries(tokenizer_tests PRIVATE engine_lib)
 
+add_executable(index_tests tests/test_index.cpp)
+target_link_libraries(index_tests PRIVATE engine_lib)
+
 enable_testing()
 add_test(NAME engine_unit_tests    COMMAND engine_tests)
 add_test(NAME tokenizer_unit_tests COMMAND tokenizer_tests)
+add_test(NAME index_unit_tests     COMMAND index_tests)
