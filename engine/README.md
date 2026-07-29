@@ -6,28 +6,48 @@ header-only framework.
 
 ## Status
 
-🚧 Not yet implemented.
+`build_from_jsonl`, the inverted index, the SYNC POINT 2a accessors and BM25
+`search` are implemented. `save` / `load` are still stubs.
+
+## Index and doc store (SYNC POINT 2a)
+
+```cpp
+struct Result  { int doc_id; double score; std::string snippet; };
+struct Posting { int doc_id; int term_freq; };
+struct DocMeta { std::string title; std::string url; };
 
 class Engine {
-  void build_from_jsonl(const std::string& path);   // A implements
-  void load(const std::string& index_dir);          // A implements
-  void save(const std::string& index_dir);          // A implements
-  std::vector<Result> search(const std::string& query, int k);  // B implements
+    void build_from_jsonl(const std::string& path);
+    void load(const std::string& index_dir);   // stub
+    void save(const std::string& index_dir);   // stub
+    std::vector<Result> search(const std::string& query, int k) const;
+
+    // Postings access — consumed by BM25
+    const std::vector<Posting>& postings(const std::string& term) const;
+    int         doc_length(int doc_id) const;
+    int         num_docs() const;
+    double      avg_doc_length() const;
+    std::size_t num_terms() const;
+
+    // Doc store — consumed for snippets
+    std::string doc_text(int doc_id) const;
+    DocMeta     doc_meta(int doc_id) const;
 };
-struct Result { int doc_id; double score; std::string snippet; };
-
-
-// Postings access (A provides, B consumes for BM25)
-struct Posting { int doc_id; int term_freq; };
-const std::vector<Posting>& postings(const std::string& term) const;   // A
-int    doc_length(int doc_id) const;   // A
-int    num_docs() const;               // A
-double avg_doc_length() const;         // A
-
-// Doc store (A provides, B consumes for snippets)
-std::string doc_text(int doc_id) const;   // A  (for snippet extraction)
-DocMeta     doc_meta(int doc_id) const;    // A  (title, url)
 ```
+
+What the index guarantees:
+
+| Guarantee | Detail |
+|-----------|--------|
+| Postings order | Ascending by `doc_id`, exactly one entry per document. The list length **is** the document frequency. |
+| `doc_id` | The external Contract 1 id, never an internal array index. |
+| `doc_length` | Token count *after* tokenization — stopwords removed, terms stemmed. |
+| Unknown term | `postings()` returns a shared empty list, so the reference is always safe to bind. |
+| Unknown `doc_id` | `doc_length` → `0`, `doc_text` → `""`, `doc_meta` → empty. Never throws. |
+| Empty index | `avg_doc_length()` is `0.0`, never NaN, and `search` returns no results. |
+| Duplicate `doc_id` | First occurrence wins; later lines are skipped with a warning on stderr. |
+| Rebuild | `build_from_jsonl` replaces the index rather than appending, so it is idempotent. |
+| Result order | `score` DESC, ties broken by `doc_id` ASC, so a given index and query give byte-identical output. |
 
 ## Text pipeline
 
