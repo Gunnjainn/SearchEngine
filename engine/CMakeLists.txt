@@ -40,6 +40,8 @@ FetchContent_MakeAvailable(crow json)
 # ---------------------------------------------------------------------------
 add_library(engine_lib STATIC
     src/engine.cpp
+    src/bm25.cpp
+    src/topk.cpp
     src/tokenizer.cpp
     src/porter.cpp
 )
@@ -64,7 +66,15 @@ target_link_libraries(tokenizer_tests PRIVATE engine_lib)
 add_executable(index_tests tests/test_index.cpp)
 target_link_libraries(index_tests PRIVATE engine_lib)
 
+add_executable(bm25_tests tests/test_bm25.cpp)
+target_link_libraries(bm25_tests PRIVATE engine_lib)
+
+add_executable(topk_tests tests/test_topk.cpp)
+target_link_libraries(topk_tests PRIVATE engine_lib)
+
 enable_testing()
 add_test(NAME engine_unit_tests    COMMAND engine_tests)
 add_test(NAME tokenizer_unit_tests COMMAND tokenizer_tests)
 add_test(NAME index_unit_tests     COMMAND index_tests)
+add_test(NAME bm25_unit_tests      COMMAND bm25_tests)
+add_test(NAME topk_unit_tests      COMMAND topk_tests)

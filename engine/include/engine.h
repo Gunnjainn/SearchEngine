@@ -4,25 +4,11 @@
 #include <unordered_map>
 #include <vector>
 
-// ---------------------------------------------------------------------------
-// Result — a single search hit (Contract 2 element).
-// ---------------------------------------------------------------------------
-struct Result {
-    int         doc_id;
-    double      score;
-    std::string snippet;
-};
+#include "bm25.h"
+#include "result.h"
+#include "topk.h"
 
-// ---------------------------------------------------------------------------
-// Posting — one entry in a term's postings list (SYNC POINT 2a).
-//
-// doc_id is the *external* id from Contract 1, not an internal array index,
-// so postings lists are meaningful to callers outside the Engine.
-// ---------------------------------------------------------------------------
-struct Posting {
-    int doc_id;
-    int term_freq;
-};
+// Posting is defined in bm25.h.
 
 // Title and URL of an indexed document (SYNC POINT 2a).
 struct DocMeta {
@@ -41,25 +27,32 @@ struct Document {
     int         length;  // token count after search::tokenize
 };
 
-class Engine {
+class Engine : public PostingsSource, public SnippetSource {
 public:
     void load(const std::string& path);
     void build_from_jsonl(const std::string& path);
     void save(const std::string& path);
     std::vector<Result> search(const std::string& query, int k) const;
 
+    // ── BM25 scoring ──────────────────────────────────────────────────────
+
+    // Accumulate BM25 contributions for each query term across candidate
+    // documents. Returns doc_id -> total BM25 score.
+    std::unordered_map<int, double> score_docs(
+        const std::vector<std::string>& query_terms) const;
+
     // ── Postings access (SYNC POINT 2a) ───────────────────────────────────
 
     // Postings for `term`, ascending by doc_id, with exactly one entry per
     // document that contains it. Unknown terms yield a shared empty list, so
     // the reference is always safe to bind.
-    const std::vector<Posting>& postings(const std::string& term) const;
+    const std::vector<Posting>& postings(const std::string& term) const override;
 
     // Token count of a document after tokenization; 0 if doc_id is unknown.
-    int doc_length(int doc_id) const;
+    int doc_length(int doc_id) const override;
 
-    int    num_docs() const;
-    double avg_doc_length() const;  // 0.0 when the index is empty
+    int    num_docs() const override;
+    double avg_doc_length() const override;  // 0.0 when the index is empty
 
     // Distinct terms in the dictionary.
     std::size_t num_terms() const;
@@ -67,7 +60,7 @@ public:
     // ── Doc store (SYNC POINT 2a) ─────────────────────────────────────────
 
     // Empty string / default-constructed DocMeta if doc_id is unknown.
-    std::string doc_text(int doc_id) const;
+    std::string doc_text(int doc_id) const override;
     DocMeta     doc_meta(int doc_id) const;
 
 private:
@@ -87,7 +80,6 @@ private:
     // Sum of every doc_length, so avg_doc_length() cannot go stale.
     long long total_tokens = 0;
 
-    // BM25 parameters
-    const double k1 = 1.5;
-    const double b = 0.75;
+    // BM25 parameters (k1=1.2, b=0.75 — configurable via BM25Params).
+    BM25Params bm25_params;
 };
