@@ -18,7 +18,7 @@ struct DocMeta { std::string title; std::string url; };
 
 class Engine {
     void build_from_jsonl(const std::string& path);
-    bool save(const std::string& index_dir) const;   // false on I/O error
+    bool save(const std::string& index_dir);         // false on I/O error
     bool load(const std::string& index_dir);         // false on error/corruption
     std::vector<Result> search(const std::string& query, int k) const;
 
@@ -77,19 +77,28 @@ high bit set on all but the last.
 | Field | Type | Notes |
 |-------|------|-------|
 | magic | `char[4]` | `SEIX` |
-| version | `u32` | currently `1`; a mismatch is rejected, never guessed at |
+| version | `u32` | currently `2`; a mismatch is rejected, never guessed at |
 | num_docs | `u32` | record count in `docs.bin` |
 | num_terms | `u32` | record count in `terms.bin` |
 | total_tokens | `u64` | sum of all doc lengths, for `avg_doc_length()` |
 
-### `docs.bin` — the doc-length table and doc store
+### `docs.idx` — the offset table, 16 bytes per document
 
-`num_docs` records, in index order:
+`num_docs` records, in index order. **This is the only part of the doc store
+read into memory.**
+
+| Field | Type | Notes |
+|-------|------|-------|
+| doc_id | `i32` | |
+| token_length | `i32` | token count after tokenization |
+| offset | `u64` | byte offset of this document's record in `docs.bin` |
+
+### `docs.bin` — the document payloads
+
+For each document, at the offset `docs.idx` records:
 
 | Field | Type |
 |-------|------|
-| doc_id | `i32` |
-| length | `i32` (token count after tokenization) |
 | title | string |
 | url | string |
 | text | string |
@@ -97,6 +106,43 @@ high bit set on all but the last.
 The document text lives here because `search` builds snippets from
 `doc_text()`. Without it a loaded index could rank correctly but not answer
 Contract 2.
+
+## Doc store
+
+Only offsets stay in RAM — 16 bytes of bookkeeping per document. Title, url and
+text are read from the backing file on demand, so memory grows with the
+document *count* and not with the size of the corpus. On a 400-document, 3.9 MB
+corpus the CLI reports:
+
+```
+[engine] Doc store: 400 docs, 28543 bytes of offsets in RAM, 3929380 bytes of text on disk
+```
+
+There are two backings, chosen automatically:
+
+| Backing | When | Offsets point at |
+|---------|------|------------------|
+| JSONL | straight after `build_from_jsonl` | line starts in the Contract 1 corpus |
+| Packed | after `save` or `load` | records in `docs.bin` |
+
+Reading the corpus directly after a build means indexing costs no extra I/O and
+never holds the text. **The JSONL must not be modified between `build_from_jsonl`
+and `save`**, because the offsets would no longer line up. `save` repoints the
+store at its own `docs.bin`, so once saved the index is self-contained and the
+corpus can be deleted.
+
+Every read opens its own stream rather than sharing one. That keeps the store
+safe to call from Crow's worker threads with no lock, which is deliberate: a
+shared stream plus a mutex would serialise snippet extraction across all
+in-flight queries, and snippets are the only part of a query that touches disk.
+
+Because snippets are now disk reads, `search` extracts them **after** the top-k
+cut, so a query does `k` reads rather than one per matching document.
+
+`make_snippet` caps a snippet at 150 bytes without splitting a UTF-8 character.
+That check is not cosmetic: half a character makes the JSON response invalid
+UTF-8, and nlohmann's `dump()` throws on that, which would turn a long document
+into a 500.
 
 ### `terms.bin` — term dictionary and postings
 

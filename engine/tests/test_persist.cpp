@@ -214,7 +214,7 @@ static void test_string_rejects_truncation() {
 // save / load round trip
 // ---------------------------------------------------------------------------
 
-static void test_save_creates_the_three_files() {
+static void test_save_creates_the_index_files() {
     const std::string dir = "test_persist_files";
     fs::remove_all(dir);
 
@@ -223,6 +223,7 @@ static void test_save_creates_the_three_files() {
     ASSERT(e.save(dir));
 
     ASSERT(fs::exists(fs::path(dir) / io::kMetaFile));
+    ASSERT(fs::exists(fs::path(dir) / io::kDocsIdxFile));
     ASSERT(fs::exists(fs::path(dir) / io::kDocsFile));
     ASSERT(fs::exists(fs::path(dir) / io::kTermsFile));
 
@@ -322,7 +323,7 @@ static void test_save_is_byte_deterministic() {
     ASSERT(loaded.load(a));
     ASSERT(loaded.save(b));
 
-    for (const char* name : {io::kMetaFile, io::kDocsFile, io::kTermsFile}) {
+    for (const char* name : {io::kMetaFile, io::kDocsIdxFile, io::kDocsFile, io::kTermsFile}) {
         ASSERT(read_whole_file(fs::path(a) / name) == read_whole_file(fs::path(b) / name));
     }
 }
@@ -422,7 +423,7 @@ static void test_load_rejects_version_mismatch() {
 static void test_load_rejects_truncated_files() {
     const std::string dir = "test_persist_truncated";
 
-    for (const char* victim : {io::kDocsFile, io::kTermsFile}) {
+    for (const char* victim : {io::kDocsIdxFile, io::kDocsFile, io::kTermsFile}) {
         fs::remove_all(dir);
         Engine built;
         built.build_from_jsonl(write_corpus("test_persist_h.jsonl"));
@@ -502,7 +503,7 @@ int main() {
     run_test("string_rejects_absurd_length", test_string_rejects_absurd_length);
     run_test("string_rejects_truncation", test_string_rejects_truncation);
 
-    run_test("save_creates_the_three_files", test_save_creates_the_three_files);
+    run_test("save_creates_the_index_files", test_save_creates_the_index_files);
     run_test("save_creates_missing_directories", test_save_creates_missing_directories);
     run_test("load_restores_index_structure", test_load_restores_index_structure);
     run_test("round_trip_query_results_are_identical", test_round_trip_query_results_are_identical);
