@@ -42,6 +42,7 @@ add_library(engine_lib STATIC
     src/engine.cpp
     src/tokenizer.cpp
     src/porter.cpp
+    src/index_io.cpp
 )
 target_include_directories(engine_lib PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(engine_lib PUBLIC nlohmann_json::nlohmann_json)
@@ -64,7 +65,11 @@ target_link_libraries(tokenizer_tests PRIVATE engine_lib)
 add_executable(index_tests tests/test_index.cpp)
 target_link_libraries(index_tests PRIVATE engine_lib)
 
+add_executable(persist_tests tests/test_persist.cpp)
+target_link_libraries(persist_tests PRIVATE engine_lib)
+
 enable_testing()
 add_test(NAME engine_unit_tests    COMMAND engine_tests)
 add_test(NAME tokenizer_unit_tests COMMAND tokenizer_tests)
 add_test(NAME index_unit_tests     COMMAND index_tests)
+add_test(NAME persist_unit_tests   COMMAND persist_tests)

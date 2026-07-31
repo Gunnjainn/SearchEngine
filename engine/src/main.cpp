@@ -6,8 +6,10 @@
 // ---------------------------------------------------------------------------
 
 #include "engine.h"
+#include "index_io.h"
 
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -24,15 +26,48 @@ int main() {
     const char* jsonl_path = std::getenv("JSONL_PATH");
     const char* index_path = std::getenv("INDEX_PATH");
 
+    const auto elapsed_ms = [](std::chrono::steady_clock::time_point from) {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now() - from).count();
+    };
+
     if (jsonl_path) {
         std::cout << "[engine] Building index from " << jsonl_path << "\n";
+
+        const auto t0 = std::chrono::steady_clock::now();
         engine.build_from_jsonl(jsonl_path);
+        const auto build_ms = elapsed_ms(t0);
+
+        std::cout << "[engine] Built " << engine.num_docs() << " docs, "
+                  << engine.num_terms() << " terms in " << build_ms << " ms\n";
+
         if (index_path) {
-            engine.save(index_path);
+            const auto t1 = std::chrono::steady_clock::now();
+            if (!engine.save(index_path)) {
+                std::cerr << "[engine] Failed to save index to " << index_path << "\n";
+                return 1;
+            }
+            const auto save_ms = elapsed_ms(t1);
+            const std::uint64_t bytes = search::io::index_size_bytes(index_path);
+            std::cout << "[engine] Saved index to " << index_path << " — "
+                      << bytes << " bytes (" << (bytes / 1024) << " KiB) in "
+                      << save_ms << " ms\n";
         }
     } else if (index_path) {
+        // No JSONL needed: everything the build produced is on disk.
         std::cout << "[engine] Loading index from " << index_path << "\n";
-        engine.load(index_path);
+
+        const auto t0 = std::chrono::steady_clock::now();
+        if (!engine.load(index_path)) {
+            std::cerr << "[engine] Failed to load index from " << index_path << "\n";
+            return 1;
+        }
+        const auto load_ms = elapsed_ms(t0);
+        const std::uint64_t bytes = search::io::index_size_bytes(index_path);
+
+        std::cout << "[engine] Loaded " << engine.num_docs() << " docs, "
+                  << engine.num_terms() << " terms from " << bytes << " bytes ("
+                  << (bytes / 1024) << " KiB) in " << load_ms << " ms\n";
     } else {
         std::cout << "[engine] No JSONL_PATH or INDEX_PATH set — engine will be empty\n";
     }
