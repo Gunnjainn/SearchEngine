@@ -5,6 +5,16 @@
 #include <queue>
 #include <utility>
 
+#include "doc_store.h"   // search::make_snippet
+
+namespace {
+
+// Longest snippet returned in a Contract 2 result, in bytes.
+constexpr std::size_t kSnippetBytes = 150;
+
+}  // namespace
+
+
 // ---------------------------------------------------------------------------
 // top_k — bounded min-heap selection.
 //
@@ -52,12 +62,11 @@ std::vector<Result> top_k(
         auto [score, doc_id] = heap.top();
         heap.pop();
 
-        // Build the snippet (first 150 chars of doc text).
+        // Snippet capped on a UTF-8 character boundary: half a character makes
+        // the JSON response invalid UTF-8, and nlohmann's dump() throws on that.
         const std::string text = snippets.doc_text(doc_id);
-        std::string snippet = text.substr(0, 150);
-        if (text.length() > 150) snippet += "...";
+        results.push_back({doc_id, score, search::make_snippet(text, kSnippetBytes)});
 
-        results.push_back({doc_id, score, std::move(snippet)});
     }
 
     // Heap drained in ascending order; reverse to satisfy Contract 2
