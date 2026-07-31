@@ -4,34 +4,33 @@
 #include <unordered_map>
 #include <vector>
 
-#include "bm25.h"
-#include "result.h"
-#include "topk.h"
 
-// Posting is defined in bm25.h.
-
-// Title and URL of an indexed document (SYNC POINT 2a).
-struct DocMeta {
-    std::string title;
-    std::string url;
-};
-
-// ---------------------------------------------------------------------------
-// Document — a stored document plus its indexing statistics.
-// ---------------------------------------------------------------------------
-struct Document {
-    int         id;
-    std::string title;
-    std::string url;
-    std::string text;
-    int         length;  // token count after search::tokenize
-};
+#include "bm25.h"        // Posting, PostingsSource, BM25Params, score_docs
+#include "doc_store.h"   // DocStore, DocMeta
+#include "result.h"      // Result
+#include "topk.h"        // SnippetSource, top_k
 
 class Engine : public PostingsSource, public SnippetSource {
+
+
 public:
-    void load(const std::string& path);
+    // Builds the index and points the doc store at `path`. The JSONL must stay
+    // unchanged until save() is called, because the store addresses documents by
+    // their byte offset within it rather than copying the text into memory.
     void build_from_jsonl(const std::string& path);
-    void save(const std::string& path);
+
+    // ── Persistence ───────────────────────────────────────────────────────
+    // save() writes the index to `dir` (created if needed) and repoints the doc
+    // store at the saved copy, so the engine no longer depends on the JSONL.
+    // load() rebuilds everything build_from_jsonl produced, so a fresh process
+    // can serve queries with no JSONL present. Format: see engine/README.md.
+    //
+    // Both return false on I/O error, a corrupt file, or a version mismatch,
+    // and report the reason on stderr. A failed load() leaves the engine
+    // exactly as it was rather than half-populated.
+    bool save(const std::string& dir);
+    bool load(const std::string& dir);
+
     std::vector<Result> search(const std::string& query, int k) const;
 
     // ── BM25 scoring ──────────────────────────────────────────────────────
@@ -59,20 +58,21 @@ public:
 
     // ── Doc store (SYNC POINT 2a) ─────────────────────────────────────────
 
+    // Read from the backing file on demand — the text is not held in memory.
     // Empty string / default-constructed DocMeta if doc_id is unknown.
     std::string doc_text(int doc_id) const override;
     DocMeta     doc_meta(int doc_id) const;
+
+    // Read-only view of the store, for reporting its footprint.
+    const search::DocStore& doc_store() const { return docs; }
 
 private:
     // NOTE: text analysis lives in search::tokenize (tokenizer.h). Both
     // build_from_jsonl and search go through it, so index terms and query
     // terms are always produced by the same pipeline.
 
-    // nullptr if doc_id was never indexed.
-    const Document* find_doc(int doc_id) const;
-
-    std::vector<Document>                docs;       // in insertion order
-    std::unordered_map<int, std::size_t> doc_index;  // doc_id -> index into docs
+    // Documents: offsets only, text on disk. See doc_store.h.
+    search::DocStore docs;
 
     // Term dictionary -> postings, each list ascending by doc_id.
     std::unordered_map<std::string, std::vector<Posting>> inverted_index;
