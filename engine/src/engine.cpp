@@ -433,7 +433,18 @@ DocMeta Engine::doc_meta(int doc_id) const {
 }
 
 // ---------------------------------------------------------------------------
-// Search
+// BM25 scoring
+// ---------------------------------------------------------------------------
+
+std::unordered_map<int, double> Engine::score_docs(
+    const std::vector<std::string>& query_terms) const
+{
+    // Delegate to the free function, passing ourselves as the PostingsSource.
+    return ::score_docs(query_terms, *this, bm25_params);
+}
+
+// ---------------------------------------------------------------------------
+// Search — uses bounded min-heap for O(n log k) top-k selection.
 // ---------------------------------------------------------------------------
 
 std::vector<Result> Engine::search(const std::string& query, int k) const {
@@ -443,58 +454,12 @@ std::vector<Result> Engine::search(const std::string& query, int k) const {
     std::vector<std::string> q_tokens = search::tokenize(query);
     if (q_tokens.empty()) return {};
 
-    // Every document tokenized to nothing (e.g. a corpus of pure stopwords):
-    // avgdl would be 0 and the BM25 length norm would divide by zero.
-    const double avgdl = avg_doc_length();
-    if (avgdl <= 0.0) return {};
+    // Score documents via the standalone BM25 scorer.
+    std::unordered_map<int, double> scores = score_docs(q_tokens);
+    if (scores.empty()) return {};
 
-    const double N = static_cast<double>(num_docs());
-
-    std::unordered_map<int, double> scores;  // doc_id -> accumulated BM25
-
-    for (const auto& q_term : q_tokens) {
-        const std::vector<Posting>& plist = postings(q_term);
-        if (plist.empty()) continue;
-
-        // A term appears once per document in its postings list, so the list
-        // length *is* the document frequency.
-        double doc_freq = static_cast<double>(plist.size());
-        double idf = std::log( (N - doc_freq + 0.5) / (doc_freq + 0.5) + 1.0 );
-
-        for (const auto& posting : plist) {
-            double tf = static_cast<double>(posting.term_freq);
-            double doc_len = static_cast<double>(doc_length(posting.doc_id));
-
-            double score_term = idf * (tf * (k1 + 1.0)) / (tf + k1 * (1.0 - b + b * (doc_len / avgdl)));
-            scores[posting.doc_id] += score_term;
-        }
-    }
-
-    std::vector<Result> results;
-    results.reserve(scores.size());
-    for (const auto& [doc_id, score] : scores) {
-        results.push_back(Result{doc_id, score, std::string()});
-    }
-
-    // Contract 2 orders by score DESC. Ties break on doc_id ASC so that a
-    // given index and query always produce byte-identical output — `scores` is
-    // an unordered_map and std::sort is not stable, so without the tie-break
-    // equal-scoring documents could permute between runs.
-    std::sort(results.begin(), results.end(), [](const Result& a, const Result& b) {
-        if (a.score != b.score) return a.score > b.score;
-        return a.doc_id < b.doc_id;
-    });
-
-    if (k > 0 && static_cast<size_t>(k) < results.size()) {
-        results.resize(k);
-    }
-
-    // Snippets come last, after the top-k cut. Each one is a disk read now that
-    // the doc store keeps text out of memory, so a query does k reads rather
-    // than one per matching document.
-    for (Result& r : results) {
-        r.snippet = search::make_snippet(docs.text(r.doc_id), kSnippetBytes);
-    }
-
-    return results;
+    // Select the top k results using a bounded min-heap — O(n log k) where n
+    // is the number of scored documents.  See topk.h for the full complexity
+    // analysis.
+    return top_k(scores, k, *this);
 }

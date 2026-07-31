@@ -9,7 +9,7 @@ COPY . .
 
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DASIO_INCLUDE_DIR=/usr/include \
     && cmake --build build --parallel "$(nproc)" \
-    && cmake --build build --target engine_tests tokenizer_tests index_tests persist_tests docstore_tests \
+    && cmake --build build --target engine_tests tokenizer_tests index_tests bm25_tests topk_tests persist_tests docstore_tests \
     && cd build && ctest --output-on-failure
 
 # ── Runtime stage ──────────────────────────────────────────────────────────
