@@ -43,9 +43,19 @@ struct Document {
 
 class Engine {
 public:
-    void load(const std::string& path);
     void build_from_jsonl(const std::string& path);
-    void save(const std::string& path);
+
+    // ── Persistence ───────────────────────────────────────────────────────
+    // save() writes the index to `dir` (created if needed); load() rebuilds
+    // everything build_from_jsonl produced, so a fresh process can serve
+    // queries with no JSONL present. Format: see engine/README.md.
+    //
+    // Both return false on I/O error, a corrupt file, or a version mismatch,
+    // and report the reason on stderr. A failed load() leaves the engine
+    // exactly as it was rather than half-populated.
+    bool save(const std::string& dir) const;
+    bool load(const std::string& dir);
+
     std::vector<Result> search(const std::string& query, int k) const;
 
     // ── Postings access (SYNC POINT 2a) ───────────────────────────────────
