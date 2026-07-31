@@ -15,8 +15,17 @@
 
 using json = nlohmann::json;
 
+namespace {
+
+// Longest snippet returned in a Contract 2 result, in bytes.
+constexpr std::size_t kSnippetBytes = 150;
+
+}  // namespace
+
 void Engine::build_from_jsonl(const std::string& path) {
-    std::ifstream infile(path);
+    // Binary, not text: the doc store addresses documents by byte offset within
+    // this file, and text mode would translate line endings and shift them.
+    std::ifstream infile(path, std::ios::binary);
     if (!infile.is_open()) {
         std::cerr << "Failed to open JSONL: " << path << std::endl;
         return;
@@ -24,41 +33,43 @@ void Engine::build_from_jsonl(const std::string& path) {
 
     // Rebuilding replaces the index rather than appending to it, so calling
     // this twice is idempotent.
-    docs.clear();
-    doc_index.clear();
     inverted_index.clear();
     total_tokens = 0;
+    docs.reset_jsonl(path);
 
     std::string line;
+    long long offset = 0;
 
     std::cout << "Building index from " << path << "..." << std::endl;
 
     while (std::getline(infile, line)) {
+        const long long line_start = offset;
+        // getline consumed the delimiter too, so account for it here.
+        offset += static_cast<long long>(line.size()) + 1;
+
+        if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
 
         try {
             auto j = json::parse(line);
-            Document doc;
-            doc.id = j["doc_id"].get<int>();
-            doc.title = j.value("title", "");
-            doc.url = j.value("url", "");
-            doc.text = j.value("text", "");
+            const int doc_id = j["doc_id"].get<int>();
 
             // doc_id keys the postings lists and the doc store, so it has to
             // be unique. First occurrence wins.
-            if (doc_index.count(doc.id) != 0) {
-                std::cerr << "Duplicate doc_id " << doc.id
+            if (docs.contains(doc_id)) {
+                std::cerr << "Duplicate doc_id " << doc_id
                           << " — keeping the first, skipping this line\n";
                 continue;
             }
 
-            std::string content = doc.title + " " + doc.text;
-            std::vector<std::string> tokens = search::tokenize(content);
-            doc.length = static_cast<int>(tokens.size());
-            total_tokens += doc.length;
+            const std::string title = j.value("title", "");
+            const std::string text  = j.value("text", "");
 
-            doc_index[doc.id] = docs.size();
-            docs.push_back(doc);
+            const std::vector<std::string> tokens = search::tokenize(title + " " + text);
+            const int length = static_cast<int>(tokens.size());
+            total_tokens += length;
+
+            docs.add(search::DocEntry{doc_id, line_start, length});
 
             std::unordered_map<std::string, int> term_freqs;
             for (const auto& token : tokens) {
@@ -66,7 +77,7 @@ void Engine::build_from_jsonl(const std::string& path) {
             }
 
             for (const auto& [term, tf] : term_freqs) {
-                inverted_index[term].push_back({doc.id, tf});
+                inverted_index[term].push_back({doc_id, tf});
             }
 
             if (docs.size() % 100 == 0) {
@@ -92,7 +103,7 @@ void Engine::build_from_jsonl(const std::string& path) {
 // Persistence — see engine/README.md for the format.
 // ---------------------------------------------------------------------------
 
-bool Engine::save(const std::string& dir) const {
+bool Engine::save(const std::string& dir) {
     namespace fs = std::filesystem;
     namespace io = search::io;
 
@@ -105,7 +116,14 @@ bool Engine::save(const std::string& dir) const {
 
     const fs::path base(dir);
 
-    // meta.bin — identity and the counts needed to read the other two files.
+    // docs.bin — the field payloads. Written first because it produces the
+    // offsets that docs.idx has to record.
+    std::vector<long long> offsets;
+    if (!docs.write_packed((base / io::kDocsFile).string(), offsets)) {
+        return false;
+    }
+
+    // meta.bin — identity and the counts needed to read the other files.
     {
         std::ofstream out(base / io::kMetaFile, std::ios::binary);
         if (!out) {
@@ -123,24 +141,22 @@ bool Engine::save(const std::string& dir) const {
         }
     }
 
-    // docs.bin — the doc-length table and the doc store, in index order.
-    // Snippets come from doc_text(), so the text has to be here for a loaded
-    // index to answer queries identically.
+    // docs.idx — the doc_id -> offset table, plus each document's token count.
+    // This is the only part of the doc store that is read into memory.
     {
-        std::ofstream out(base / io::kDocsFile, std::ios::binary);
+        std::ofstream out(base / io::kDocsIdxFile, std::ios::binary);
         if (!out) {
-            std::cerr << "[index] cannot write " << io::kDocsFile << "\n";
+            std::cerr << "[index] cannot write " << io::kDocsIdxFile << "\n";
             return false;
         }
-        for (const Document& doc : docs) {
-            io::write_i32(out, doc.id);
-            io::write_i32(out, doc.length);
-            io::write_string(out, doc.title);
-            io::write_string(out, doc.url);
-            io::write_string(out, doc.text);
+        const std::vector<search::DocEntry>& entries = docs.all();
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            io::write_i32(out, entries[i].doc_id);
+            io::write_i32(out, entries[i].token_length);
+            io::write_u64(out, static_cast<std::uint64_t>(offsets[i]));
         }
         if (!out.good()) {
-            std::cerr << "[index] write failed for " << io::kDocsFile << "\n";
+            std::cerr << "[index] write failed for " << io::kDocsIdxFile << "\n";
             return false;
         }
     }
@@ -192,6 +208,9 @@ bool Engine::save(const std::string& dir) const {
         }
     }
 
+    // The saved copy is now self-contained, so stop reading through the JSONL.
+    docs.rebind_packed((base / io::kDocsFile).string(), offsets);
+
     return true;
 }
 
@@ -231,50 +250,61 @@ bool Engine::load(const std::string& dir) {
 
     // Everything is read into locals and only committed once fully valid, so a
     // failed load leaves a working index in place.
-    std::vector<Document>                new_docs;
-    std::unordered_map<int, std::size_t> new_doc_index;
+    search::DocStore new_docs;
     std::unordered_map<std::string, std::vector<Posting>> new_index;
 
-    // ── docs.bin ──
+    const fs::path docs_bin = base / io::kDocsFile;
+    new_docs.reset_packed(docs_bin.string());
+
+    // Payload size, so an offset pointing outside the file is caught here
+    // instead of producing an empty snippet at query time.
+    std::error_code ec;
+    const std::uintmax_t docs_bytes = fs::file_size(docs_bin, ec);
+    if (ec) {
+        std::cerr << "[index] cannot stat " << docs_bin.string() << ": " << ec.message() << "\n";
+        return false;
+    }
+
+    // ── docs.idx ──
     {
-        std::ifstream in(base / io::kDocsFile, std::ios::binary);
+        std::ifstream in(base / io::kDocsIdxFile, std::ios::binary);
         if (!in) {
-            std::cerr << "[index] cannot open " << io::kDocsFile << "\n";
+            std::cerr << "[index] cannot open " << io::kDocsIdxFile << "\n";
             return false;
         }
 
-        new_docs.reserve(n_docs);
         long long token_sum = 0;
 
         for (std::uint32_t i = 0; i < n_docs; ++i) {
-            std::int32_t id = 0, length = 0;
-            Document doc;
-            if (!io::read_i32(in, id) || !io::read_i32(in, length)
-                || !io::read_string(in, doc.title)
-                || !io::read_string(in, doc.url)
-                || !io::read_string(in, doc.text)) {
-                std::cerr << "[index] " << io::kDocsFile << " is truncated at document "
+            std::int32_t doc_id = 0, length = 0;
+            std::uint64_t offset = 0;
+            if (!io::read_i32(in, doc_id) || !io::read_i32(in, length)
+                || !io::read_u64(in, offset)) {
+                std::cerr << "[index] " << io::kDocsIdxFile << " is truncated at entry "
                           << i << "\n";
                 return false;
             }
             if (length < 0) {
-                std::cerr << "[index] negative doc_length for doc_id " << id << "\n";
+                std::cerr << "[index] negative doc_length for doc_id " << doc_id << "\n";
                 return false;
             }
-            if (new_doc_index.count(id) != 0) {
-                std::cerr << "[index] duplicate doc_id " << id << " in " << io::kDocsFile << "\n";
+            if (offset >= docs_bytes && !(offset == 0 && docs_bytes == 0)) {
+                std::cerr << "[index] doc_id " << doc_id << " points past the end of "
+                          << io::kDocsFile << "\n";
+                return false;
+            }
+            if (new_docs.contains(doc_id)) {
+                std::cerr << "[index] duplicate doc_id " << doc_id << " in "
+                          << io::kDocsIdxFile << "\n";
                 return false;
             }
 
-            doc.id = id;
-            doc.length = length;
+            new_docs.add(search::DocEntry{doc_id, static_cast<long long>(offset), length});
             token_sum += length;
-            new_doc_index[id] = new_docs.size();
-            new_docs.push_back(std::move(doc));
         }
 
         if (!io::at_eof(in)) {
-            std::cerr << "[index] trailing data in " << io::kDocsFile << "\n";
+            std::cerr << "[index] trailing data in " << io::kDocsIdxFile << "\n";
             return false;
         }
         // Cross-check the header against the records it describes.
@@ -338,7 +368,7 @@ bool Engine::load(const std::string& dir) {
                     std::cerr << "[index] bad term_freq for \"" << term << "\"\n";
                     return false;
                 }
-                if (new_doc_index.count(doc_id) == 0) {
+                if (!new_docs.contains(doc_id)) {
                     std::cerr << "[index] \"" << term << "\" cites unknown doc_id " << doc_id << "\n";
                     return false;
                 }
@@ -361,7 +391,6 @@ bool Engine::load(const std::string& dir) {
 
     // ── Commit ──
     docs           = std::move(new_docs);
-    doc_index      = std::move(new_doc_index);
     inverted_index = std::move(new_index);
     total_tokens   = static_cast<long long>(tokens);
 
@@ -378,14 +407,8 @@ const std::vector<Posting>& Engine::postings(const std::string& term) const {
     return (it == inverted_index.end()) ? empty : it->second;
 }
 
-const Document* Engine::find_doc(int doc_id) const {
-    auto it = doc_index.find(doc_id);
-    return (it == doc_index.end()) ? nullptr : &docs[it->second];
-}
-
 int Engine::doc_length(int doc_id) const {
-    const Document* doc = find_doc(doc_id);
-    return (doc != nullptr) ? doc->length : 0;
+    return docs.token_length(doc_id);
 }
 
 int Engine::num_docs() const {
@@ -402,14 +425,11 @@ std::size_t Engine::num_terms() const {
 }
 
 std::string Engine::doc_text(int doc_id) const {
-    const Document* doc = find_doc(doc_id);
-    return (doc != nullptr) ? doc->text : std::string();
+    return docs.text(doc_id);
 }
 
 DocMeta Engine::doc_meta(int doc_id) const {
-    const Document* doc = find_doc(doc_id);
-    if (doc == nullptr) return DocMeta{};
-    return DocMeta{doc->title, doc->url};
+    return docs.meta(doc_id);
 }
 
 // ---------------------------------------------------------------------------
@@ -453,15 +473,7 @@ std::vector<Result> Engine::search(const std::string& query, int k) const {
     std::vector<Result> results;
     results.reserve(scores.size());
     for (const auto& [doc_id, score] : scores) {
-        Result r;
-        r.doc_id = doc_id;
-        r.score = score;
-
-        const std::string text = doc_text(doc_id);
-        r.snippet = text.substr(0, 150);
-        if (text.length() > 150) r.snippet += "...";
-
-        results.push_back(std::move(r));
+        results.push_back(Result{doc_id, score, std::string()});
     }
 
     // Contract 2 orders by score DESC. Ties break on doc_id ASC so that a
@@ -475,6 +487,13 @@ std::vector<Result> Engine::search(const std::string& query, int k) const {
 
     if (k > 0 && static_cast<size_t>(k) < results.size()) {
         results.resize(k);
+    }
+
+    // Snippets come last, after the top-k cut. Each one is a disk read now that
+    // the doc store keeps text out of memory, so a query does k reads rather
+    // than one per matching document.
+    for (Result& r : results) {
+        r.snippet = search::make_snippet(docs.text(r.doc_id), kSnippetBytes);
     }
 
     return results;

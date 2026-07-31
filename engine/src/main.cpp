@@ -11,13 +11,31 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
+#include <system_error>
 
 #include "crow.h"
 #include "nlohmann/json.hpp"
 
 using json = nlohmann::json;
+
+// Documents are addressed by offset, so RAM tracks the document *count* and not
+// the size of the corpus text. Print both so the difference is visible.
+static void report_doc_store(const Engine& engine) {
+    const search::DocStore& store = engine.doc_store();
+    std::error_code ec;
+    const std::uintmax_t backing = std::filesystem::file_size(store.backing_path(), ec);
+
+    std::cout << "[engine] Doc store: " << store.size() << " docs, "
+              << store.approx_ram_bytes() << " bytes of offsets in RAM";
+    if (!ec) {
+        std::cout << ", " << backing << " bytes of text on disk ("
+                  << store.backing_path() << ")";
+    }
+    std::cout << "\n";
+}
 
 int main() {
     // ── Initialise engine ─────────────────────────────────────────────────
@@ -53,6 +71,7 @@ int main() {
                       << bytes << " bytes (" << (bytes / 1024) << " KiB) in "
                       << save_ms << " ms\n";
         }
+        report_doc_store(engine);
     } else if (index_path) {
         // No JSONL needed: everything the build produced is on disk.
         std::cout << "[engine] Loading index from " << index_path << "\n";
@@ -68,6 +87,7 @@ int main() {
         std::cout << "[engine] Loaded " << engine.num_docs() << " docs, "
                   << engine.num_terms() << " terms from " << bytes << " bytes ("
                   << (bytes / 1024) << " KiB) in " << load_ms << " ms\n";
+        report_doc_store(engine);
     } else {
         std::cout << "[engine] No JSONL_PATH or INDEX_PATH set — engine will be empty\n";
     }

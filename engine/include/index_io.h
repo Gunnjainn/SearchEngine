@@ -19,13 +19,19 @@
 namespace search::io {
 
 // Format identity, written at the head of meta.bin.
+//
+// Version 2 split the doc store: docs.bin holds only the field payloads and the
+// new docs.idx holds the doc_id -> byte offset table, so document text is read
+// on demand instead of being loaded into memory. A version 1 index is rejected
+// rather than misread.
 inline constexpr char        kMagic[4] = {'S', 'E', 'I', 'X'};
-inline constexpr std::uint32_t kVersion = 1;
+inline constexpr std::uint32_t kVersion = 2;
 
 // File names inside an index directory.
-inline constexpr const char* kMetaFile  = "meta.bin";
-inline constexpr const char* kDocsFile  = "docs.bin";
-inline constexpr const char* kTermsFile = "terms.bin";
+inline constexpr const char* kMetaFile    = "meta.bin";
+inline constexpr const char* kDocsIdxFile = "docs.idx";
+inline constexpr const char* kDocsFile    = "docs.bin";
+inline constexpr const char* kTermsFile   = "terms.bin";
 
 // Refuse to allocate for an implausible string length. Contract 1 documents are
 // text, so 64 MiB for a single field is already far past reasonable.

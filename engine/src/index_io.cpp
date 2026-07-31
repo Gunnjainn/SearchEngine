@@ -124,7 +124,7 @@ std::uint64_t index_size_bytes(const std::string& dir) {
     const fs::path base(dir);
 
     std::uint64_t total = 0;
-    for (const char* name : {kMetaFile, kDocsFile, kTermsFile}) {
+    for (const char* name : {kMetaFile, kDocsIdxFile, kDocsFile, kTermsFile}) {
         std::error_code ec;
         const std::uintmax_t size = fs::file_size(base / name, ec);
         if (ec) return 0;  // incomplete index; report nothing rather than a partial sum
