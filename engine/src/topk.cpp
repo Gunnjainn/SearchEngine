@@ -27,6 +27,20 @@ std::vector<Result> top_k(
     int                                    k,
     const SnippetSource&                   snippets)
 {
+    // Select first, then read text for the survivors only.
+    std::vector<Result> results = top_k(scores, k);
+    for (Result& r : results) {
+        // Snippet capped on a UTF-8 character boundary: half a character makes
+        // the JSON response invalid UTF-8, and nlohmann's dump() throws on that.
+        r.snippet = search::make_snippet(snippets.doc_text(r.doc_id), kSnippetBytes);
+    }
+    return results;
+}
+
+std::vector<Result> top_k(
+    const std::unordered_map<int, double>& scores,
+    int                                    k)
+{
     if (k <= 0 || scores.empty()) return {};
 
     // -----------------------------------------------------------------------
@@ -62,11 +76,7 @@ std::vector<Result> top_k(
         auto [score, doc_id] = heap.top();
         heap.pop();
 
-        // Snippet capped on a UTF-8 character boundary: half a character makes
-        // the JSON response invalid UTF-8, and nlohmann's dump() throws on that.
-        const std::string text = snippets.doc_text(doc_id);
-        results.push_back({doc_id, score, search::make_snippet(text, kSnippetBytes)});
-
+        results.push_back({doc_id, score, std::string()});
     }
 
     // Heap drained in ascending order; reverse to satisfy Contract 2

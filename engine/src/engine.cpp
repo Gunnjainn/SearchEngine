@@ -448,18 +448,41 @@ std::unordered_map<int, double> Engine::score_docs(
 // ---------------------------------------------------------------------------
 
 std::vector<Result> Engine::search(const std::string& query, int k) const {
+    return search(query, k, search::QueryMode::And);
+}
+
+std::vector<Result> Engine::search(const std::string& query, int k,
+                                   search::QueryMode mode) const {
     if (docs.empty()) return {};
 
-    // Same tokenizer as the index build — see search::tokenize in tokenizer.h.
-    std::vector<std::string> q_tokens = search::tokenize(query);
-    if (q_tokens.empty()) return {};
+    // 1. Parse — the same search::tokenize the index build uses, so a query
+    //    term and the indexed term for the same word are identical.
+    const search::Query parsed = search::parse_query(query, mode);
+    if (parsed.terms.empty()) return {};
 
-    // Score documents via the standalone BM25 scorer.
-    std::unordered_map<int, double> scores = score_docs(q_tokens);
+    // 2. Candidates — AND intersects the postings lists of the distinct terms,
+    //    OR unions them. Either way this decides *which* documents are worth
+    //    scoring, not their order.
+    const std::vector<int> candidates = search::candidate_docs(parsed, *this);
+    if (candidates.empty()) return {};
+
+    // 3. Rank — BM25 over the candidates only (bm25.cpp). Document frequency
+    //    still comes from the whole collection, so narrowing the candidates
+    //    does not distort what a term is worth.
+    const std::unordered_map<int, double> scores =
+        ::score_docs(parsed.terms, *this, bm25_params, candidates);
     if (scores.empty()) return {};
 
-    // Select the top k results using a bounded min-heap — O(n log k) where n
-    // is the number of scored documents.  See topk.h for the full complexity
-    // analysis.
-    return top_k(scores, k, *this);
+    // 4. Top k — bounded min-heap, O(n log k). See topk.h.
+    std::vector<Result> results = top_k(scores, k);
+
+    // 5. Snippets — only now, for the k survivors. Each is a disk read, and a
+    //    window around the matched terms rather than the head of the document,
+    //    which usually says nothing about why the document matched.
+    for (Result& r : results) {
+        r.snippet = search::make_focused_snippet(docs.text(r.doc_id), parsed.terms,
+                                                 kSnippetBytes);
+    }
+
+    return results;
 }
