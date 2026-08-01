@@ -36,3 +36,15 @@ std::vector<Result> top_k(
     const std::unordered_map<int, double>& scores,
     int                                    k,
     const SnippetSource&                   snippets);
+
+// ---------------------------------------------------------------------------
+// top_k — selection only, leaving every Result's snippet empty.
+//
+// Same ordering and complexity as above. Use this when the snippet depends on
+// something top-k has no business knowing, such as the query terms: the caller
+// fills the snippets afterwards, and document text is read only for the k
+// documents that survived rather than for every candidate.
+// ---------------------------------------------------------------------------
+std::vector<Result> top_k(
+    const std::unordered_map<int, double>& scores,
+    int                                    k);

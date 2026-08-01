@@ -322,28 +322,59 @@ CharClass classify(std::uint32_t cp, std::string& out) {
 // Public API
 // ===========================================================================
 
-std::vector<std::string> fold_and_split(const std::string& text) {
-    std::vector<std::string> words;
+namespace {
+
+// A folded word plus its byte range in the source text. Both fold_and_split()
+// and tokenize_spans() are built on this, so stage 1+2 has one implementation
+// and the two public entry points cannot drift apart.
+struct FoldedSpan {
+    std::string word;
+    std::size_t begin;
+    std::size_t end;
+};
+
+std::vector<FoldedSpan> fold_and_split_spans(const std::string& text) {
+    std::vector<FoldedSpan> words;
     std::string current;
+    std::size_t begin = 0;  // where `current` started in the source
+    std::size_t end   = 0;  // one past the last alphanumeric byte consumed
 
     std::size_t i = 0;
     while (i < text.size()) {
-        const std::uint32_t cp = next_codepoint(text, i);
+        const std::size_t   cp_begin = i;
+        const bool          starting = current.empty();
+        const std::uint32_t cp       = next_codepoint(text, i);
+
         switch (classify(cp, current)) {
             case CharClass::Alnum:
-                break;  // classify() already appended the folded form
+                // classify() already appended the folded form.
+                if (starting) begin = cp_begin;
+                end = i;
+                break;
             case CharClass::Ignorable:
+                // Contributes nothing and does not close the token, so a
+                // combining mark cannot extend the recorded range either.
                 break;
             case CharClass::Separator:
                 if (!current.empty()) {
-                    words.push_back(current);
+                    words.push_back(FoldedSpan{current, begin, end});
                     current.clear();
                 }
                 break;
         }
     }
-    if (!current.empty()) words.push_back(current);
+    if (!current.empty()) words.push_back(FoldedSpan{current, begin, end});
 
+    return words;
+}
+
+}  // namespace
+
+std::vector<std::string> fold_and_split(const std::string& text) {
+    std::vector<std::string> words;
+    for (FoldedSpan& span : fold_and_split_spans(text)) {
+        words.push_back(std::move(span.word));
+    }
     return words;
 }
 
@@ -360,6 +391,19 @@ std::vector<std::string> tokenize(const std::string& text) {
         tokens.push_back(std::move(stem));
     }
     return tokens;
+}
+
+std::vector<TokenSpan> tokenize_spans(const std::string& text) {
+    std::vector<TokenSpan> spans;
+    for (FoldedSpan& span : fold_and_split_spans(text)) {
+        // Stages 3 and 4 exactly as in tokenize(): stopwords are matched on the
+        // folded but unstemmed word, then what survives is stemmed.
+        if (is_stopword(span.word)) continue;
+        std::string stem = porter_stem(span.word);
+        if (stem.empty()) continue;
+        spans.push_back(TokenSpan{std::move(stem), span.begin, span.end});
+    }
+    return spans;
 }
 
 }  // namespace search

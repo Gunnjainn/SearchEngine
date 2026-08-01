@@ -7,6 +7,7 @@
 
 #include "bm25.h"        // Posting, PostingsSource, BM25Params, score_docs
 #include "doc_store.h"   // DocStore, DocMeta
+#include "query.h"       // QueryMode, parse_query, candidate_docs
 #include "result.h"      // Result
 #include "topk.h"        // SnippetSource, top_k
 
@@ -31,7 +32,15 @@ public:
     bool save(const std::string& dir);
     bool load(const std::string& dir);
 
+    // Contract 2 search: parse with the shared tokenizer, generate candidates,
+    // rank with BM25, take the top k, then build a snippet around the matched
+    // terms of each survivor.
+    //
+    // Defaults to AND across query terms — a document must contain all of them.
+    // The overload takes search::QueryMode::Or for the broader union instead.
     std::vector<Result> search(const std::string& query, int k) const;
+    std::vector<Result> search(const std::string& query, int k,
+                               search::QueryMode mode) const;
 
     // ── BM25 scoring ──────────────────────────────────────────────────────
 

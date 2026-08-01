@@ -1,12 +1,15 @@
 #include "doc_store.h"
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <unordered_set>
 #include <utility>
 
 #include <nlohmann/json.hpp>
 
 #include "index_io.h"
+#include "tokenizer.h"
 
 namespace search {
 namespace {
@@ -226,6 +229,104 @@ std::string make_snippet(const std::string& text, std::size_t max_bytes) {
         --cut;
     }
     return text.substr(0, cut) + "...";
+}
+
+namespace {
+
+bool is_continuation(char c) {
+    return (static_cast<unsigned char>(c) & 0xC0) == 0x80;
+}
+
+// Move forward to the next UTF-8 character start at or after `pos`.
+std::size_t utf8_forward(const std::string& s, std::size_t pos) {
+    while (pos < s.size() && is_continuation(s[pos])) ++pos;
+    return pos;
+}
+
+// Move back to the character start at or before `pos`.
+std::size_t utf8_back(const std::string& s, std::size_t pos) {
+    if (pos > s.size()) pos = s.size();
+    while (pos > 0 && is_continuation(s[pos])) --pos;
+    return pos;
+}
+
+bool is_space(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+}
+
+}  // namespace
+
+std::string make_focused_snippet(const std::string& text,
+                                 const std::vector<std::string>& query_terms,
+                                 std::size_t max_bytes) {
+    if (text.size() <= max_bytes) return text;          // whole document fits
+    if (query_terms.empty()) return make_snippet(text, max_bytes);
+
+    const std::unordered_set<std::string> wanted(query_terms.begin(), query_terms.end());
+
+    const std::vector<TokenSpan> spans = tokenize_spans(text);
+    std::vector<std::size_t> hits;  // indices into spans that match the query
+    for (std::size_t i = 0; i < spans.size(); ++i) {
+        if (wanted.count(spans[i].term) != 0) hits.push_back(i);
+    }
+    if (hits.empty()) return make_snippet(text, max_bytes);
+
+    // Lead-in so the first match is not flush against the left edge.
+    const std::size_t lead = max_bytes / 4;
+
+    // Try a window anchored on each hit and keep the one covering the most
+    // distinct query terms, breaking ties on total matches then on position.
+    std::size_t best_start = 0;
+    long long   best_score = -1;
+
+    for (std::size_t h : hits) {
+        const std::size_t anchor = spans[h].begin;
+        const std::size_t start  = (anchor > lead) ? anchor - lead : 0;
+        const std::size_t stop   = std::min(text.size(), start + max_bytes);
+
+        std::unordered_set<std::string> distinct;
+        long long total = 0;
+        for (std::size_t j : hits) {
+            if (spans[j].begin >= start && spans[j].end <= stop) {
+                distinct.insert(spans[j].term);
+                ++total;
+            }
+        }
+
+        // Distinct terms dominate: a window showing two query words is more
+        // informative than one showing the same word twice.
+        const long long score = static_cast<long long>(distinct.size()) * 1000 + total;
+        if (score > best_score) {
+            best_score = score;
+            best_start = start;
+        }
+    }
+
+    std::size_t start = utf8_forward(text, best_start);
+    std::size_t stop  = utf8_back(text, std::min(text.size(), start + max_bytes));
+
+    // Avoid starting or ending mid-word, but only if a space is close enough
+    // that trimming to it does not gut the window. A single token longer than
+    // the whole window (a hash, a base64 blob) has no space to snap to, so the
+    // plain byte cut stands.
+    const std::size_t slack = max_bytes / 4;
+    if (start > 0) {
+        std::size_t s = start;
+        while (s < stop && s < start + slack && !is_space(text[s])) ++s;
+        if (s < stop && is_space(text[s])) start = utf8_forward(text, s + 1);
+    }
+    if (stop < text.size()) {
+        std::size_t e = stop;
+        while (e > start && e + slack > stop && !is_space(text[e])) --e;
+        if (e > start && is_space(text[e])) stop = utf8_back(text, e);
+    }
+    if (stop <= start) return make_snippet(text, max_bytes);
+
+    std::string out;
+    if (start > 0) out += "...";
+    out.append(text, start, stop - start);
+    if (stop < text.size()) out += "...";
+    return out;
 }
 
 }  // namespace search

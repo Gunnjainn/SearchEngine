@@ -108,4 +108,23 @@ private:
 // ---------------------------------------------------------------------------
 std::string make_snippet(const std::string& text, std::size_t max_bytes);
 
+// ---------------------------------------------------------------------------
+// make_focused_snippet — a window of `text` around the query terms.
+//
+// The head of a document usually says nothing about why it matched, so this
+// finds the densest run of query terms instead and returns roughly max_bytes
+// of text around it, marking each truncated side with an ellipsis.
+//
+// `query_terms` are stemmed terms as produced by search::tokenize; the document
+// is re-tokenized with tokenize_spans() so the two are compared in the same
+// space. Falls back to make_snippet() when no term is found — which happens
+// when a document matched on its title, since only the body is passed here.
+//
+// Like make_snippet, never splits a UTF-8 character, and additionally avoids
+// cutting mid-word when a nearby space allows it.
+// ---------------------------------------------------------------------------
+std::string make_focused_snippet(const std::string& text,
+                                 const std::vector<std::string>& query_terms,
+                                 std::size_t max_bytes);
+
 }  // namespace search

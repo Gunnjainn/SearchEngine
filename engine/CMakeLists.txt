@@ -42,6 +42,7 @@ add_library(engine_lib STATIC
     src/engine.cpp
     src/bm25.cpp
     src/topk.cpp
+    src/query.cpp
     src/tokenizer.cpp
     src/porter.cpp
     src/index_io.cpp
@@ -79,6 +80,9 @@ target_link_libraries(persist_tests PRIVATE engine_lib)
 add_executable(docstore_tests tests/test_docstore.cpp)
 target_link_libraries(docstore_tests PRIVATE engine_lib)
 
+add_executable(query_tests tests/test_query.cpp)
+target_link_libraries(query_tests PRIVATE engine_lib)
+
 enable_testing()
 add_test(NAME engine_unit_tests    COMMAND engine_tests)
 add_test(NAME tokenizer_unit_tests COMMAND tokenizer_tests)
@@ -87,3 +91,4 @@ add_test(NAME bm25_unit_tests      COMMAND bm25_tests)
 add_test(NAME topk_unit_tests      COMMAND topk_tests)
 add_test(NAME persist_unit_tests   COMMAND persist_tests)
 add_test(NAME docstore_unit_tests  COMMAND docstore_tests)
+add_test(NAME query_unit_tests     COMMAND query_tests)

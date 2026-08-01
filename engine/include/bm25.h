@@ -51,3 +51,17 @@ std::unordered_map<int, double> score_docs(
     const PostingsSource&           source,
     const BM25Params&               params = BM25Params{});
 
+// ---------------------------------------------------------------------------
+// score_docs — same scoring, restricted to a candidate set.
+//
+// `candidates` must be ascending by doc_id (as produced by
+// search::candidate_docs). Postings outside it are skipped, so an AND query
+// scores only the documents that actually contain every term instead of
+// everything sharing one common word.
+// ---------------------------------------------------------------------------
+std::unordered_map<int, double> score_docs(
+    const std::vector<std::string>& query_terms,
+    const PostingsSource&           source,
+    const BM25Params&               params,
+    const std::vector<int>&         candidates);
+

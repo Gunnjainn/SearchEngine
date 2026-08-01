@@ -6,8 +6,9 @@ header-only framework.
 
 ## Status
 
-`build_from_jsonl`, the inverted index, the SYNC POINT 2a accessors, BM25
-`search`, and `save` / `load` persistence are all implemented.
+`build_from_jsonl`, the inverted index, the SYNC POINT 2a accessors, the full
+query pipeline (parse → candidates → BM25 → top-k → snippets), and `save` /
+`load` persistence are all implemented.
 
 ## Index and doc store (SYNC POINT 2a)
 
@@ -177,6 +178,61 @@ working index untouched rather than half-replaced. It rejects a bad magic, a
 version mismatch, truncation, trailing bytes, a `total_tokens` that disagrees
 with the sum of doc lengths, a zero doc_id gap, a zero term frequency, and any
 posting citing an unknown doc_id.
+
+## Query pipeline
+
+`Engine::search` runs five stages:
+
+| # | Stage | Where |
+|---|-------|-------|
+| 1 | **Parse** the raw query with `search::tokenize` | `query.cpp` |
+| 2 | **Candidates** — intersect or union the postings lists | `query.cpp` |
+| 3 | **Rank** the candidates with BM25 | `bm25.cpp` |
+| 4 | **Top k** via a bounded min-heap, O(n log k) | `topk.cpp` |
+| 5 | **Snippets** around the matched terms, for the k survivors only | `doc_store.cpp` |
+
+Stage 1 calls the *same* function the index build calls, so a query term and the
+indexed term for the same word are identical by construction.
+
+### AND by default, OR on request
+
+```cpp
+engine.search("compiler database", 10);                          // AND (default)
+engine.search("compiler database", 10, search::QueryMode::Or);   // OR
+```
+
+**AND** requires a document to contain every distinct query term, and intersects
+the postings lists smallest-first so the work is bounded by the rarest term
+rather than the corpus. **OR** unions them instead. Both then rank the survivors
+with the same scorer — the mode decides *which* documents are scored, never
+their order.
+
+Contract 2 has no mode field, so HTTP always gets AND. Note the tradeoff: a
+long query returns nothing unless some document contains all of it. There is
+deliberately no automatic OR fallback — a caller that wants breadth asks for it.
+
+Document frequency for IDF is always taken across the whole collection, before
+any candidate restriction. Narrowing the candidate set must not change what a
+term is worth.
+
+### Snippets
+
+The head of a document rarely explains why it matched, so snippets are a window
+around the query terms instead:
+
+```
+query: "database index"
+  ...the database can choose a sequential scan where an index scan would be far faster...
+```
+
+`make_focused_snippet` re-tokenizes the document with `tokenize_spans`, which
+returns each term's byte offset in the source, finds the window covering the most
+*distinct* query terms, and trims it to whole words. A window showing two query
+words beats one showing the same word twice.
+
+It falls back to `make_snippet` — the head of the document — when no query term
+appears in the body, which happens when a document matched on its title alone.
+Both functions cut only on UTF-8 character boundaries.
 
 ## Text pipeline
 

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,26 @@ namespace search {
 //   tokenize("Running the Compilers!") -> {"run", "compil"}
 // ---------------------------------------------------------------------------
 std::vector<std::string> tokenize(const std::string& text);
+
+// ---------------------------------------------------------------------------
+// TokenSpan — a token plus where it came from in the source text.
+//
+// `begin` and `end` are byte offsets into the *original* string, not the folded
+// form, so they stay valid after diacritic folding changes a token's length.
+// ---------------------------------------------------------------------------
+struct TokenSpan {
+    std::string term;   // the same value tokenize() would produce
+    std::size_t begin;  // byte offset of the first character
+    std::size_t end;    // one past the last character
+};
+
+// tokenize(), but keeping each token's position. Used to build snippets around
+// the query terms: the index stores stems, so finding a term in a document
+// means re-running the pipeline and remembering where each stem started.
+//
+// Guaranteed to agree with tokenize(): the terms of tokenize_spans(t), in
+// order, are exactly tokenize(t).
+std::vector<TokenSpan> tokenize_spans(const std::string& text);
 
 // ---------------------------------------------------------------------------
 // Stages 1+2 on their own: lowercase, fold diacritics to ASCII where we can,
