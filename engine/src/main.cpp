@@ -92,6 +92,15 @@ int main() {
         std::cout << "[engine] No JSONL_PATH or INDEX_PATH set — engine will be empty\n";
     }
 
+    // BUILD_ONLY turns this binary into an index builder: everything above has
+    // run, so the index is on disk, and we exit instead of serving. `make index`
+    // uses it to seed the index volume as a discrete step.
+    const char* build_only = std::getenv("BUILD_ONLY");
+    if (build_only != nullptr && std::string(build_only) != "0") {
+        std::cout << "[engine] BUILD_ONLY set — index is written, exiting without serving\n";
+        return 0;
+    }
+
     // ── Configure Crow ────────────────────────────────────────────────────
     crow::SimpleApp app;
 
