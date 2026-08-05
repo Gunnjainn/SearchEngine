@@ -1,65 +1,113 @@
+# ---------------------------------------------------------------------------
+# Full stack: db + engine + api + web.
+#
+# Run from the repository root (paths below are relative to this file):
+#   docker compose -f infra/docker-compose.yml up -d
+# or just `make run`.
+#
+# Every value has a default, so a clean checkout with no .env still comes up.
+# ---------------------------------------------------------------------------
 services:
   engine:
     build:
       context: ../engine
       dockerfile: Dockerfile
     ports:
-      - "8080:8080"
+      - "${ENGINE_PORT:-8080}:8080"
     volumes:
+      # The corpus is read-only input; the index is ours to write.
       - ../ingest/data:/data:ro
+      - engine_index:/index
     environment:
+      # Both are set on purpose. The entrypoint drops JSONL_PATH once an index
+      # exists on the volume, so the corpus is only re-read when there is no
+      # index to load. See engine/docker-entrypoint.sh.
       - JSONL_PATH=/data/corpus.sample.jsonl
+      - INDEX_PATH=/index
     networks:
       - searchnet
+    restart: unless-stopped
 
   api:
     build:
       context: ../api
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     env_file:
-      - ../.env
+      # Optional: the stack works without a .env file.
+      - path: ../.env
+        required: false
     environment:
       - ENGINE_URL=http://engine:8080
     networks:
       - searchnet
     depends_on:
-      - engine
+      engine:
+        # Wait for the engine to answer /health rather than merely to start, so
+        # the first query after `make run` cannot race the index load.
+        condition: service_healthy
+    restart: unless-stopped
 
   web:
     build:
       context: ../web
       dockerfile: Dockerfile
     ports:
-      - "5173:5173"
+      - "${WEB_PORT:-5173}:5173"
     environment:
-      - VITE_API_URL=http://localhost:8000
+      # Resolved by the browser, not inside the network, hence localhost.
+      - VITE_API_URL=http://localhost:${API_PORT:-8000}
     networks:
       - searchnet
     depends_on:
       - api
+    restart: unless-stopped
 
   db:
     image: pgvector/pgvector:pg16
     env_file:
-      - ../.env
+      - path: ../.env
+        required: false
+    environment:
+      # Defaults keep the healthcheck and the DB in agreement even with no .env.
+      POSTGRES_USER: ${POSTGRES_USER:-search}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-search}
+      POSTGRES_DB: ${POSTGRES_DB:-searchdb}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     networks:
       - searchnet
-
-    profiles:
-      - full
-
+    restart: unless-stopped
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U search -d searchdb" ]
+      # Uses the same variables as the server, so a custom .env cannot make the
+      # check disagree with the database it is checking.
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER:-search} -d $${POSTGRES_DB:-searchdb}",
+        ]
       interval: 5s
       timeout: 3s
       retries: 5
+
+  # ── One-shot tools (not started by `up`) ────────────────────────────────
+  #
+  # ingest fetches the corpus:  docker compose run --rm ingest
+  # Kept in a profile so `up` never waits on a network fetch.
+  ingest:
+    build:
+      context: ../ingest
+      dockerfile: Dockerfile
+    volumes:
+      - ../ingest/data:/data
+    networks:
+      - searchnet
+    profiles:
+      - tools
 
 networks:
   searchnet:
@@ -67,3 +115,4 @@ networks:
 
 volumes:
   pgdata:
+  engine_index:
