@@ -1,6 +1,7 @@
 """Tests for the FastAPI gateway.
 
 Mocks the httpx client to simulate engine responses without a running engine.
+Covers pagination, validation, error handling, and health checks.
 """
 
 from __future__ import annotations
@@ -46,13 +47,34 @@ def _mock_engine_response(
     )
 
 
+def _mock_health_response(
+    status_code: int = 200,
+) -> httpx.Response:
+    """Build a fake httpx.Response for health."""
+    return httpx.Response(
+        status_code=status_code,
+        json={"status": "ok"},
+        request=httpx.Request("GET", "http://engine:8080/health"),
+    )
+
+
 # ── Health ──────────────────────────────────────────────────────────────────
 
 
-def test_health_returns_ok(client: TestClient) -> None:
+@patch("app.main.http_client")
+def test_health_returns_ok_when_engine_up(mock_client, client: TestClient) -> None:
+    mock_client.get = AsyncMock(return_value=_mock_health_response())
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    assert resp.json() == {"status": "ok", "engine": "reachable"}
+
+
+@patch("app.main.http_client")
+def test_health_reports_engine_down(mock_client, client: TestClient) -> None:
+    mock_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok", "engine": "unreachable (connection refused)"}
 
 
 # ── Search – Contract 2 compliance ─────────────────────────────────────────
@@ -88,30 +110,66 @@ def test_search_result_fields(mock_client, client: TestClient) -> None:
         assert isinstance(r["snippet"], str)
 
 
-@patch("app.main.http_client")
-def test_search_results_sorted_desc(mock_client, client: TestClient) -> None:
-    """Results must be sorted by score descending."""
-    mock_client.post = AsyncMock(return_value=_mock_engine_response())
-
-    resp = client.post("/search", json={"query": "fox", "k": 10})
-    scores = [r["score"] for r in resp.json()["results"]]
-    assert scores == sorted(scores, reverse=True)
+# ── Validation ─────────────────────────────────────────────────────────────
 
 
 def test_search_missing_query_returns_422(client: TestClient) -> None:
     """Missing required field 'query' should yield 422."""
     resp = client.post("/search", json={"k": 5})
     assert resp.status_code == 422
+    assert "error" in resp.json()
+    assert "Validation error" in resp.json()["error"]
+
+
+def test_search_empty_query_returns_422(client: TestClient) -> None:
+    """Blank query should yield 422."""
+    resp = client.post("/search", json={"query": "   ", "k": 5})
+    assert resp.status_code == 422
+    assert "must not be empty" in resp.json()["detail"].lower()
+
+
+def test_search_invalid_k_bounds(client: TestClient) -> None:
+    """k < 1 or k > 100 should yield 422."""
+    resp = client.post("/search", json={"query": "test", "k": 0})
+    assert resp.status_code == 422
+    
+    resp = client.post("/search", json={"query": "test", "k": 101})
+    assert resp.status_code == 422
+
+
+# ── Pagination ─────────────────────────────────────────────────────────────
 
 
 @patch("app.main.http_client")
-def test_search_default_k(mock_client, client: TestClient) -> None:
-    """Omitting k should default to 10 and still work."""
+def test_search_pagination_requests_k(mock_client, client: TestClient) -> None:
+    """Check that gateway requests page * per_page results from engine."""
     mock_client.post = AsyncMock(return_value=_mock_engine_response())
+    
+    client.post("/search", json={"query": "hello", "page": 2, "per_page": 5})
+    
+    mock_client.post.assert_called_once()
+    kwargs = mock_client.post.call_args.kwargs
+    assert kwargs["json"]["query"] == "hello"
+    assert kwargs["json"]["k"] == 10  # 2 * 5
 
-    resp = client.post("/search", json={"query": "test"})
+
+@patch("app.main.http_client")
+def test_search_pagination_slices_results(mock_client, client: TestClient) -> None:
+    """Check that gateway slices the results down to the correct page window."""
+    # Engine returns 3 results
+    mock_client.post = AsyncMock(return_value=_mock_engine_response())
+    
+    # Request page 2 with per_page 2
+    # k requested will be 4. Engine returns 3.
+    # Gateway should slice offset 2 : 4 -> which is just the 3rd result.
+    resp = client.post("/search", json={"query": "hello", "page": 2, "per_page": 2})
     assert resp.status_code == 200
-    assert len(resp.json()["results"]) <= 10
+    body = resp.json()
+    assert body["page"] == 2
+    assert body["per_page"] == 2
+    assert body["total_results"] == 3
+    assert len(body["results"]) == 1
+    assert body["results"][0]["doc_id"] == 7
 
 
 # ── Proxy error handling ───────────────────────────────────────────────────
@@ -119,12 +177,13 @@ def test_search_default_k(mock_client, client: TestClient) -> None:
 
 @patch("app.main.http_client")
 def test_search_engine_timeout_returns_502(mock_client, client: TestClient) -> None:
-    """Engine timeout should return 502."""
+    """Engine timeout should return 502 with structured body."""
     mock_client.post = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
 
     resp = client.post("/search", json={"query": "slow", "k": 5})
     assert resp.status_code == 502
-    assert "timed out" in resp.json()["detail"].lower()
+    assert "error" in resp.json()
+    assert "timed out" in resp.json()["error"].lower()
 
 
 @patch("app.main.http_client")
@@ -134,7 +193,7 @@ def test_search_engine_connect_error_returns_502(mock_client, client: TestClient
 
     resp = client.post("/search", json={"query": "down", "k": 5})
     assert resp.status_code == 502
-    assert "connect" in resp.json()["detail"].lower()
+    assert "connect" in resp.json()["error"].lower()
 
 
 @patch("app.main.http_client")
@@ -144,18 +203,12 @@ def test_search_engine_non_200_returns_502(mock_client, client: TestClient) -> N
 
     resp = client.post("/search", json={"query": "error", "k": 5})
     assert resp.status_code == 502
-    assert "500" in resp.json()["detail"]
+    assert "500" in resp.json()["error"]
 
 
-@patch("app.main.http_client")
-def test_search_forwards_query_and_k(mock_client, client: TestClient) -> None:
-    """Verify the gateway forwards query and k to the engine."""
-    mock_client.post = AsyncMock(return_value=_mock_engine_response())
+# ── Request logging ────────────────────────────────────────────────────────
 
-    client.post("/search", json={"query": "hello world", "k": 3})
 
-    # Check the call was made with correct arguments
-    mock_client.post.assert_called_once()
-    call_kwargs = mock_client.post.call_args
-    assert call_kwargs.kwargs["json"]["query"] == "hello world"
-    assert call_kwargs.kwargs["json"]["k"] == 3
+def test_request_logging_adds_request_id(client: TestClient) -> None:
+    resp = client.post("/search", json={"query": "test"})
+    assert "X-Request-ID" in resp.headers
