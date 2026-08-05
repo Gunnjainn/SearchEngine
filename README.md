@@ -67,6 +67,7 @@ make smoke
 | web | http://localhost:5173 | React + Vite frontend |
 | api | http://localhost:8000/docs | FastAPI gateway, OpenAPI UI |
 | engine | http://localhost:8080/health | C++ engine, Contract 2 |
+| engine stats | http://localhost:8080/stats | Index and query-cache counters |
 | db | `localhost:5432` | PostgreSQL + pgvector |
 
 ### Without `make`
@@ -84,6 +85,8 @@ Every target is a single command; use these directly if `make` is unavailable
 | `make clean` | `docker compose -f infra/docker-compose.yml down -v` |
 | `make logs` | `docker compose -f infra/docker-compose.yml logs -f` |
 | `make ps` | `docker compose -f infra/docker-compose.yml ps` |
+| `make stats` | `curl -s http://localhost:8080/stats` |
+| `make bench` | see the Makefile — runs `bench_query` against the frozen corpus |
 
 `make help` lists everything.
 
@@ -117,7 +120,7 @@ make reindex
 
 ```bash
 make test          # every suite
-make test-engine   # 8 C++ suites, run inside the image build
+make test-engine   # 9 C++ suites, run inside the image build
 make test-api      # FastAPI gateway
 make test-ingest   # ingestion, all HTTP mocked
 make test-web      # frontend lint
@@ -140,6 +143,7 @@ to override:
 | `JSONL_PATH` | `/data/corpus.sample.jsonl` | Corpus inside the engine container |
 | `INDEX_PATH` | `/index` | Index location on the engine volume |
 | `BUILD_ONLY` | unset | Build the index and exit instead of serving |
+| `QUERY_CACHE_CAPACITY` | 256 | Query-cache entry limit; `0` disables it |
 
 ---
 

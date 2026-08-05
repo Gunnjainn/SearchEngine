@@ -9,10 +9,12 @@
 #include "index_io.h"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 
@@ -101,8 +103,58 @@ int main() {
         return 0;
     }
 
+    // ── Query cache ───────────────────────────────────────────────────────
+    // QUERY_CACHE_CAPACITY sets the entry limit; 0 disables caching entirely,
+    // which is how the benchmark measures uncached latency.
+    if (const char* cap_env = std::getenv("QUERY_CACHE_CAPACITY")) {
+        try {
+            const long long cap = std::stoll(cap_env);
+            if (cap < 0) throw std::out_of_range("negative");
+            engine.set_cache_capacity(static_cast<std::size_t>(cap));
+        } catch (const std::exception&) {
+            std::cerr << "[engine] Ignoring QUERY_CACHE_CAPACITY=" << cap_env
+                      << " (expected a non-negative integer)\n";
+        }
+    }
+    {
+        const std::size_t cap = engine.cache_stats().capacity;
+        std::cout << "[engine] Query cache: "
+                  << (cap == 0 ? "disabled" : std::to_string(cap) + " entries") << "\n";
+    }
+
     // ── Configure Crow ────────────────────────────────────────────────────
     crow::SimpleApp app;
+
+    // GET /stats — index and query-cache counters.
+    //
+    // Not part of Contract 2, which specifies POST /search only; this is
+    // observability alongside the existing GET /health.
+    CROW_ROUTE(app, "/stats").methods(crow::HTTPMethod::GET)(
+        [&engine]() {
+            const search::CacheStats cache = engine.cache_stats();
+            const search::DocStore& store = engine.doc_store();
+
+            json resp;
+            resp["docs"]  = engine.num_docs();
+            resp["terms"] = engine.num_terms();
+            resp["doc_store"] = {
+                {"offsets_bytes_in_ram", store.approx_ram_bytes()},
+                {"backing", store.backing_path()},
+            };
+            resp["cache"] = {
+                {"hits",      cache.hits},
+                {"misses",    cache.misses},
+                {"evictions", cache.evictions},
+                {"hit_rate",  cache.hit_rate()},
+                {"size",      cache.size},
+                {"capacity",  cache.capacity},
+            };
+
+            auto r = crow::response(200, resp.dump());
+            r.set_header("Content-Type", "application/json");
+            return r;
+        }
+    );
 
     // GET /health — liveness probe
     CROW_ROUTE(app, "/health").methods(crow::HTTPMethod::GET)(

@@ -5,11 +5,12 @@
 #include <vector>
 
 
-#include "bm25.h"        // Posting, PostingsSource, BM25Params, score_docs
-#include "doc_store.h"   // DocStore, DocMeta
-#include "query.h"       // QueryMode, parse_query, candidate_docs
-#include "result.h"      // Result
-#include "topk.h"        // SnippetSource, top_k
+#include "bm25.h"         // Posting, PostingsSource, BM25Params, score_docs
+#include "doc_store.h"    // DocStore, DocMeta
+#include "query.h"        // QueryMode, parse_query, candidate_docs
+#include "query_cache.h"  // QueryCache, CacheStats
+#include "result.h"       // Result
+#include "topk.h"         // SnippetSource, top_k
 
 class Engine : public PostingsSource, public SnippetSource {
 
@@ -75,6 +76,18 @@ public:
     // Read-only view of the store, for reporting its footprint.
     const search::DocStore& doc_store() const { return docs; }
 
+    // ── Query cache ───────────────────────────────────────────────────────
+    //
+    // search() serves repeated queries from an LRU cache keyed by the parsed
+    // terms, the mode and k. It is invalidated automatically whenever the index
+    // changes, so it cannot outlive the data it was computed from.
+
+    search::CacheStats cache_stats() const { return query_cache.stats(); }
+
+    // 0 disables caching and drops anything already held.
+    void set_cache_capacity(std::size_t capacity) { query_cache.set_capacity(capacity); }
+    void clear_cache() { query_cache.clear(); }
+
 private:
     // NOTE: text analysis lives in search::tokenize (tokenizer.h). Both
     // build_from_jsonl and search go through it, so index terms and query
@@ -91,4 +104,13 @@ private:
 
     // BM25 parameters (k1=1.2, b=0.75 — configurable via BM25Params).
     BM25Params bm25_params;
+
+    // The five ranking stages, without the cache around them.
+    std::vector<Result> execute(const search::Query& parsed, int k) const;
+
+    // Mutable because caching does not change what search() returns, only how
+    // fast it returns it — search() stays const, as callers expect. The cache
+    // has its own mutex, so concurrent const searches are safe; it also makes
+    // Engine non-copyable, which nothing in the project relies on.
+    mutable search::QueryCache query_cache;
 };
