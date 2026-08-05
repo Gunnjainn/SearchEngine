@@ -234,6 +234,71 @@ It falls back to `make_snippet` — the head of the document — when no query t
 appears in the body, which happens when a document matched on its title alone.
 Both functions cut only on UTF-8 character boundaries.
 
+## Query cache
+
+`search()` serves repeated queries from an in-memory LRU cache. A `std::list` in
+recency order plus a map from key to list position makes lookup, promotion and
+eviction all O(1), and one `std::mutex` guards the whole thing.
+
+Measured on the frozen 968-document corpus, 16 queries × 40 repeats, k=10:
+
+| | p50 | p95 |
+|---|-----|-----|
+| cache disabled | 994 µs | 3467 µs |
+| cache warm | 2.1 µs | 3.2 µs |
+| **speedup** | **474×** | **1083×** |
+
+```bash
+make bench    # reproduce the numbers above
+make stats    # live counters from a running engine
+```
+
+### The key is the parsed terms, not the query string
+
+```
+"rust compiler"    ─┐
+"RUST COMPILERS!"   ├─ one cache entry
+"the rust compiler"─┘
+```
+
+All three tokenize to the same terms, so they share an entry rather than
+occupying three. Terms are also **sorted**, so `"compiler database"` and
+`"database compiler"` share one. That is safe rather than merely convenient:
+BM25 sums independent per-term contributions, snippet windows treat the terms as
+a set, and the top-k tie-break is on `doc_id` — nothing depends on query order.
+Duplicates are kept, because a term written twice is scored twice.
+
+`mode` and `k` are part of the key; both change the result. Terms are joined with
+U+001F, which the tokenizer classifies as a separator and can therefore never
+appear inside a term — so no two term lists can collide by concatenation.
+
+### Invalidation
+
+`build_from_jsonl` and `load` clear the cache. This is the part that would fail
+*silently* if it were wrong: a cache outliving its index serves results for
+documents that are no longer there. `load` clears **after** its commit, so a
+failed load leaves index and cache consistent rather than mismatched.
+
+`save` does not clear it — it only repoints the doc store at an identical copy of
+the same text, so cached snippets stay correct.
+
+### Bounds and configuration
+
+Bounded by entry count, not bytes. The default 256 entries at k=10 is on the
+order of half a megabyte — small next to the index, and predictable.
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `QUERY_CACHE_CAPACITY` | 256 | Entry limit. `0` disables caching and drops what is held. |
+
+`GET /stats` reports `hits`, `misses`, `evictions`, `hit_rate`, `size` and
+`capacity` alongside document and term counts. It is observability next to
+`/health`, not part of Contract 2.
+
+Note `get()` takes the mutex exclusively even though it reads: an LRU lookup
+promotes the entry it finds, so there is no read-only path and a `shared_mutex`
+would buy nothing.
+
 ## Text pipeline
 
 `search::tokenize` (`include/tokenizer.h`) is the single text pipeline. Both

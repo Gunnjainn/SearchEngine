@@ -37,6 +37,9 @@ void Engine::build_from_jsonl(const std::string& path) {
     total_tokens = 0;
     docs.reset_jsonl(path);
 
+    // Cached results were computed against the old index and are now wrong.
+    query_cache.clear();
+
     std::string line;
     long long offset = 0;
 
@@ -394,6 +397,10 @@ bool Engine::load(const std::string& dir) {
     inverted_index = std::move(new_index);
     total_tokens   = static_cast<long long>(tokens);
 
+    // Only now, after the commit: a failed load leaves both the index and the
+    // cache untouched, so they cannot disagree.
+    query_cache.clear();
+
     return true;
 }
 
@@ -460,6 +467,23 @@ std::vector<Result> Engine::search(const std::string& query, int k,
     const search::Query parsed = search::parse_query(query, mode);
     if (parsed.terms.empty()) return {};
 
+    // Serve a repeat from the cache. The key is the parsed terms, so queries
+    // that differ only in casing, punctuation, stopwords or word order share an
+    // entry. See search::cache_key.
+    const std::string key = search::cache_key(mode, parsed.terms, k);
+    std::vector<Result> cached;
+    if (query_cache.get(key, cached)) return cached;
+
+    std::vector<Result> results = execute(parsed, k);
+
+    // Empty results are cached too: proving that nothing matches still costs a
+    // postings intersection, and a query with no hits is exactly the kind a user
+    // retries.
+    query_cache.put(key, results);
+    return results;
+}
+
+std::vector<Result> Engine::execute(const search::Query& parsed, int k) const {
     // 2. Candidates — AND intersects the postings lists of the distinct terms,
     //    OR unions them. Either way this decides *which* documents are worth
     //    scoring, not their order.

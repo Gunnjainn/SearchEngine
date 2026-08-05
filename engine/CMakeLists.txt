@@ -15,6 +15,9 @@ endif()
 # ---------------------------------------------------------------------------
 include(FetchContent)
 
+# std::mutex in the query cache needs -pthread on gcc.
+find_package(Threads REQUIRED)
+
 # Crow — header-only HTTP framework
 FetchContent_Declare(
     crow
@@ -43,13 +46,14 @@ add_library(engine_lib STATIC
     src/bm25.cpp
     src/topk.cpp
     src/query.cpp
+    src/query_cache.cpp
     src/tokenizer.cpp
     src/porter.cpp
     src/index_io.cpp
     src/doc_store.cpp
 )
 target_include_directories(engine_lib PUBLIC ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(engine_lib PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(engine_lib PUBLIC nlohmann_json::nlohmann_json Threads::Threads)
 
 # ---------------------------------------------------------------------------
 # Main executable
@@ -83,6 +87,14 @@ target_link_libraries(docstore_tests PRIVATE engine_lib)
 add_executable(query_tests tests/test_query.cpp)
 target_link_libraries(query_tests PRIVATE engine_lib)
 
+add_executable(cache_tests tests/test_cache.cpp)
+target_link_libraries(cache_tests PRIVATE engine_lib)
+
+# Latency benchmark. Deliberately not registered with ctest: it reports numbers
+# rather than passing or failing, and timing assertions make flaky tests.
+add_executable(bench_query tools/bench_query.cpp)
+target_link_libraries(bench_query PRIVATE engine_lib)
+
 enable_testing()
 add_test(NAME engine_unit_tests    COMMAND engine_tests)
 add_test(NAME tokenizer_unit_tests COMMAND tokenizer_tests)
@@ -92,3 +104,4 @@ add_test(NAME topk_unit_tests      COMMAND topk_tests)
 add_test(NAME persist_unit_tests   COMMAND persist_tests)
 add_test(NAME docstore_unit_tests  COMMAND docstore_tests)
 add_test(NAME query_unit_tests     COMMAND query_tests)
+add_test(NAME cache_unit_tests     COMMAND cache_tests)

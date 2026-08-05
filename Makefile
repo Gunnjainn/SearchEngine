@@ -23,7 +23,7 @@ ENGINE_PORT ?= 8080
 WEB_PORT    ?= 5173
 
 .DEFAULT_GOAL := help
-.PHONY: help build corpus index reindex run up down restart logs ps smoke \
+.PHONY: help build corpus index reindex run up down restart logs ps smoke stats bench \
         test test-engine test-api test-ingest test-web clean
 
 ## help: list the available targets
@@ -35,6 +35,8 @@ help:
 	@echo "  make index     build the on-disk index from the corpus"
 	@echo "  make reindex   discard the index and build it again"
 	@echo "  make smoke     POST a real query and print the response"
+	@echo "  make stats     index and query-cache counters"
+	@echo "  make bench     query latency p50/p95, cache off vs warm"
 	@echo "  make test      run every test suite"
 	@echo "  make ps        show service status and health"
 	@echo "  make logs      follow logs from every service"
@@ -97,6 +99,14 @@ logs:
 ## ps: show service status and health
 ps:
 	$(COMPOSE) ps
+
+## stats: index and query-cache counters from the engine
+stats:
+	curl -s http://localhost:$(ENGINE_PORT)/stats
+
+## bench: query latency p50/p95, cache disabled vs warm, against the frozen corpus
+bench:
+	$(COMPOSE) run --rm --no-deps -v "$(CURDIR)/eval:/eval:ro" --entrypoint bench_query engine /eval/corpus.frozen.jsonl
 
 ## smoke: send a real query through the API gateway and print the response
 smoke:
