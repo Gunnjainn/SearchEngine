@@ -3,8 +3,41 @@ import './App.css'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
+// Simple helper to highlight query terms in a snippet.
+// It splits the text by the query terms (case-insensitive) and wraps matches in a <mark> tag.
+const HighlightedText = ({ text, query }) => {
+  if (!query || !text) return <>{text}</>
+
+  // Escape regex characters in query terms
+  const terms = query
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0)
+    .map((t) => t.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'))
+
+  if (terms.length === 0) return <>{text}</>
+
+  const regex = new RegExp(`(${terms.join('|')})`, 'gi')
+  const parts = text.split(regex)
+
+  return (
+    <>
+      {parts.map((part, i) =>
+        regex.test(part) ? (
+          <mark key={i} className="highlight">
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  )
+}
+
 function App() {
   const [query, setQuery] = useState('')
+  const [lastQuery, setLastQuery] = useState('')
   const [results, setResults] = useState(null)
   const [latencyMs, setLatencyMs] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -19,6 +52,7 @@ function App() {
     setError(null)
     setResults(null)
     setLatencyMs(null)
+    setLastQuery(trimmed)
 
     try {
       const resp = await fetch(`${API_URL}/search`, {
@@ -103,18 +137,24 @@ function App() {
             </div>
 
             {results.length === 0 ? (
-              <div className="empty-state">No results found.</div>
+              <div className="empty-state">No results found for "{lastQuery}".</div>
             ) : (
               <div className="results-list" id="results-list">
                 {results.map((r, i) => (
                   <article className="result-card" key={`${r.doc_id}-${i}`}>
                     <div className="result-header">
-                      <span className="result-doc-id">doc #{r.doc_id}</span>
+                      <h2 className="result-title">
+                        <a href={r.url || `https://news.ycombinator.com/item?id=${r.doc_id}`} target="_blank" rel="noopener noreferrer">
+                          {r.title || `Document #${r.doc_id}`}
+                        </a>
+                      </h2>
                       <span className="result-score">
                         score {r.score.toFixed(2)}
                       </span>
                     </div>
-                    <p className="result-snippet">{r.snippet}</p>
+                    <p className="result-snippet">
+                      <HighlightedText text={r.snippet} query={lastQuery} />
+                    </p>
                   </article>
                 ))}
               </div>
