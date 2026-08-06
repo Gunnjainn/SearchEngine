@@ -83,7 +83,10 @@ void Engine::build_from_jsonl(const std::string& path) {
                 inverted_index[term].push_back({doc_id, tf});
             }
 
-            if (docs.size() % 100 == 0) {
+            // Every 10k, not every 100: the \r redraw only works on a terminal,
+            // and in `docker logs` each update becomes its own entry — at 100k
+            // documents that turned the boot log into one unreadable line.
+            if (docs.size() % 10000 == 0) {
                 std::cout << "\rIndexed " << docs.size() << " documents..." << std::flush;
             }
         } catch (const std::exception& e) {

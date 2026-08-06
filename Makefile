@@ -18,6 +18,11 @@
 
 COMPOSE     := docker compose -f infra/docker-compose.yml
 CORPUS      := ingest/data/corpus.jsonl
+# Documents `make corpus` fetches. The default is the corpus every published
+# benchmark uses; override it for a quick first run:
+#   make corpus CORPUS_TARGET=5000
+CORPUS_TARGET ?= 100000
+CORPUS_BEFORE ?= 1785000000
 API_PORT    ?= 8000
 ENGINE_PORT ?= 8080
 WEB_PORT    ?= 5173
@@ -31,7 +36,7 @@ help:
 	@echo "Targets:"
 	@echo "  make run       bring the stack up and wait until it is healthy"
 	@echo "  make build     build every image"
-	@echo "  make corpus    fetch the HN corpus into $(CORPUS)"
+	@echo "  make corpus    fetch $(CORPUS_TARGET) docs into $(CORPUS)"
 	@echo "  make index     build the on-disk index from the corpus"
 	@echo "  make reindex   discard the index and build it again"
 	@echo "  make smoke     POST a real query and print the response"
@@ -53,7 +58,7 @@ build:
 
 ## corpus: fetch the corpus in a container, so no host Python is needed
 corpus:
-	$(COMPOSE) run --rm ingest
+	$(COMPOSE) run --rm ingest --target $(CORPUS_TARGET) --before $(CORPUS_BEFORE) -o /data/corpus.jsonl
 
 # Fetch the corpus only when it is missing.
 $(CORPUS):
