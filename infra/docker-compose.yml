@@ -22,7 +22,7 @@ services:
       # Both are set on purpose. The entrypoint drops JSONL_PATH once an index
       # exists on the volume, so the corpus is only re-read when there is no
       # index to load. See engine/docker-entrypoint.sh.
-      - JSONL_PATH=/data/corpus.sample.jsonl
+      - JSONL_PATH=/data/corpus.jsonl
       - INDEX_PATH=/index
     networks:
       - searchnet

@@ -17,7 +17,7 @@
 # ---------------------------------------------------------------------------
 
 COMPOSE     := docker compose -f infra/docker-compose.yml
-CORPUS      := ingest/data/corpus.sample.jsonl
+CORPUS      := ingest/data/corpus.jsonl
 API_PORT    ?= 8000
 ENGINE_PORT ?= 8080
 WEB_PORT    ?= 5173
@@ -47,7 +47,7 @@ help:
 	@echo "                    api    http://localhost:$(API_PORT)/docs"
 	@echo "                    engine http://localhost:$(ENGINE_PORT)/health"
 
-## build: build every image. The engine image runs all 8 C++ suites as it builds.
+## build: build every image. The engine image runs all 9 C++ suites as it builds.
 build:
 	$(COMPOSE) build
 
@@ -104,9 +104,9 @@ ps:
 stats:
 	curl -s http://localhost:$(ENGINE_PORT)/stats
 
-## bench: query latency p50/p95, cache disabled vs warm, against the frozen corpus
+## bench: query latency p50/p95, cache disabled vs warm, against the corpus
 bench:
-	$(COMPOSE) run --rm --no-deps -v "$(CURDIR)/eval:/eval:ro" --entrypoint bench_query engine /eval/corpus.frozen.jsonl
+	$(COMPOSE) run --rm --no-deps -v "$(CURDIR)/ingest/data:/data:ro" --entrypoint bench_query engine /data/corpus.jsonl
 
 ## smoke: send a real query through the API gateway and print the response
 smoke:
@@ -115,7 +115,7 @@ smoke:
 ## test: run every suite
 test: test-engine test-api test-ingest test-web
 
-## test-engine: the 8 C++ suites — ctest runs inside the image build
+## test-engine: the 9 C++ suites — ctest runs inside the image build
 test-engine:
 	docker build -f engine/Dockerfile engine
 

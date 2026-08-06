@@ -12,4 +12,4 @@ COPY . .
 #
 # Compose mounts ingest/data at /data, so the default output lands on the host.
 ENTRYPOINT ["python", "hn_fetch.py"]
-CMD ["--target", "1000", "-o", "/data/corpus.sample.jsonl"]
+CMD ["--target", "100000", "--before", "1785000000", "-o", "/data/corpus.jsonl"]

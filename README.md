@@ -86,7 +86,7 @@ Every target is a single command; use these directly if `make` is unavailable
 | `make logs` | `docker compose -f infra/docker-compose.yml logs -f` |
 | `make ps` | `docker compose -f infra/docker-compose.yml ps` |
 | `make stats` | `curl -s http://localhost:8080/stats` |
-| `make bench` | see the Makefile — runs `bench_query` against the frozen corpus |
+| `make bench` | see the Makefile — runs `bench_query` against `ingest/data/corpus.jsonl` |
 
 `make help` lists everything.
 
@@ -98,7 +98,7 @@ The corpus is gitignored, so a clean checkout has none. `make run` fetches it
 first, in a container, so no host Python is needed:
 
 ```
-make corpus   →  ingest/data/corpus.sample.jsonl   (~1,000 HN stories)
+make corpus   →  ingest/data/corpus.jsonl   (100,000 HN stories, ~30 MB)
 make index    →  engine_index volume               (meta.bin, docs.idx, docs.bin, terms.bin)
 make run      →  db + engine + api + web
 ```
@@ -140,7 +140,7 @@ to override:
 |----------|---------|---------|
 | `WEB_PORT` / `API_PORT` / `ENGINE_PORT` / `POSTGRES_PORT` | 5173 / 8000 / 8080 / 5432 | Host ports |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | search / search / searchdb | Database |
-| `JSONL_PATH` | `/data/corpus.sample.jsonl` | Corpus inside the engine container |
+| `JSONL_PATH` | `/data/corpus.jsonl` | Corpus inside the engine container |
 | `INDEX_PATH` | `/index` | Index location on the engine volume |
 | `BUILD_ONLY` | unset | Build the index and exit instead of serving |
 | `QUERY_CACHE_CAPACITY` | 256 | Query-cache entry limit; `0` disables it |
