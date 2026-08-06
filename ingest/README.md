@@ -12,7 +12,7 @@ and outputs Contract-1 JSONL.
 
 ```bash
 pip install -r requirements.txt
-python hn_fetch.py                          # default: 1000 stories → data/corpus.sample.jsonl
+python hn_fetch.py --target 100000 --before 1785000000   # the project corpus
 python hn_fetch.py --target 500 -o out.jsonl
 ```
 
