@@ -23,7 +23,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /src/build/search_engine /usr/local/bin/search_engine
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# Strip CR before chmod. .gitattributes pins this file to LF, but a ZIP download
+# or a clone made before that existed can still arrive with CRLF — and then the
+# shebang reads "#!/bin/sh\r", so the kernel hunts for an interpreter named
+# "/bin/sh\r" and reports "no such file or directory" against the script itself.
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
+    && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Default index location; compose mounts a named volume here so the index
 # survives restarts and only gets built once.
@@ -32,7 +37,13 @@ RUN mkdir -p /index
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=12 \
+# start-period covers a cold first boot, which builds the index before serving.
+# On the 100k corpus that is ~9 s of indexing plus a save that reads every
+# document back from /data — a bind mount, so on Docker Desktop for Windows it
+# runs ~30x slower than native and the whole boot can take a couple of minutes.
+# Failures during start-period do not count toward retries, so a genuinely dead
+# engine is still caught within 60 s once it is over.
+HEALTHCHECK --interval=5s --timeout=3s --start-period=300s --retries=12 \
     CMD curl -fsS http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

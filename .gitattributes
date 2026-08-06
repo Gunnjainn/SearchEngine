@@ -1,0 +1,30 @@
+# ---------------------------------------------------------------------------
+# Line endings.
+#
+# Files that run inside Linux containers must keep LF endings. Git on Windows
+# defaults to core.autocrlf=true, which rewrites LF to CRLF on checkout — and a
+# CRLF shell script makes the shebang "#!/bin/sh\r", so the kernel looks for an
+# interpreter literally named "/bin/sh\r". The failure is opaque:
+#
+#   exec /usr/local/bin/docker-entrypoint.sh: no such file or directory
+#
+# ...pointing at the script, which exists, rather than at the interpreter, which
+# does not. Pinning eol=lf here means a Windows clone produces a working stack.
+# ---------------------------------------------------------------------------
+
+# Let Git decide what is text, and normalise to LF in the repository.
+* text=auto
+
+# Consumed inside Linux containers — must be LF on disk as well.
+*.sh                 text eol=lf
+Dockerfile           text eol=lf
+*.Dockerfile         text eol=lf
+docker-compose*.yml  text eol=lf
+Makefile             text eol=lf
+*.mk                 text eol=lf
+.env.example         text eol=lf
+
+# Corpus and index data are never diffed; keep Git out of them.
+*.jsonl              text eol=lf -diff
+*.bin                binary
+*.idx                binary
